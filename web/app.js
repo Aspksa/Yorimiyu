@@ -82,12 +82,12 @@ async function refreshWorkspace() {
   ]);
   const messages=chat.messages;
   $('chat-message-count').textContent=messages.length+' сообщений';
-  $('chat-history').replaceChildren(...messages.map(m=>{
+  $('chat-history').replaceChildren(...(messages.length?messages.map(m=>{
     const p=node('div',m.content); p.className='chat-message '+m.role; p.setAttribute('data-role',m.role); return p;
-  }));
+  }):[Object.assign(node('p','История пока пуста. Напишите первое сообщение.'),{className:'empty-state'})]));
   $('chat-history').scrollTop=$('chat-history').scrollHeight;
   $('graph-canvas').replaceChildren();
-  const nodes=graphData.nodes.slice(0,150), edges=graphData.edges;
+  const nodes=graphData.nodes, edges=graphData.edges;
   window.yorimiyuGraphData={nodes,edges};
   const map=new Map(nodes.map((n,i)=>[n.id,i]));
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
@@ -104,17 +104,17 @@ async function refreshWorkspace() {
   nodes.forEach((n,i)=>{
     const circle=document.createElementNS(svg.namespaceURI,'circle');
     for (const [k,v] of Object.entries({cx:pos[i].x,cy:pos[i].y,r:n.kind==='entity'?10:7,fill:n.kind==='entity'?'#b65057':'#c7a15b'})) circle.setAttribute(k,v);
-    circle.setAttribute('tabindex','0');circle.setAttribute('role','button');circle.setAttribute('aria-label',n.label||'Узел графа');
+    circle.setAttribute('tabindex','0');circle.setAttribute('role','button');circle.setAttribute('focusable','true');circle.setAttribute('aria-label',n.label||'Узел графа');
     circle.dataset.nodeId=String(n.id);
     const select=()=>{$('graph-selected').textContent=n.label||n.id;$('graph-node-id').textContent=String(n.id);$('graph-node-degree').textContent=String(edges.filter(e=>e.source===n.id||e.target===n.id).length);$('graph-focus-node').disabled=false;$('graph-focus-node').onclick=()=>{graphView={scale:1.5,x:400-pos[i].x,y:210-pos[i].y};const layer=svg.querySelector('#graph-layer');layer.setAttribute('transform',`translate(${graphView.x} ${graphView.y}) translate(400 210) scale(${graphView.scale}) translate(-400 -210)`);};layer.querySelectorAll('circle').forEach(el=>el.classList.remove('is-selected'));circle.classList.add('is-selected');};
     circle.addEventListener('click',select);circle.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}});
     const title=document.createElementNS(svg.namespaceURI,'title');title.textContent=n.label;circle.append(title);layer.append(circle);
     const label=document.createElementNS(svg.namespaceURI,'text');label.textContent=String(n.label||'').slice(0,25);label.setAttribute('x',pos[i].x+12);label.setAttribute('y',pos[i].y+4);label.setAttribute('class','graph-node-label');layer.append(label);
   });
-  $('graph-canvas').append(svg);
-  initGraphInteractions(svg);
+  if(nodes.length){$('graph-canvas').append(svg);}else{$('graph-canvas').append(Object.assign(node('p','Пока нет узлов. Добавьте запись памяти — граф обновится автоматически.'),{className:'empty-state'}));}
+  if(nodes.length)initGraphInteractions(svg);
   filterGraphNodes();
-  $('graph-summary').textContent=nodes.length+' узлов · '+edges.length+' связей · '+graphData.kind;
+  $('graph-summary').textContent=nodes.length+' узлов · '+edges.length+' связей · '+graphData.kind+(nodes.length>=300?' · показана первая часть данных':'');
   $('graph-metric-nodes').textContent=String(nodes.length);
   $('graph-metric-edges').textContent=String(edges.length);
   $('graph-metric-source').textContent=graphData.kind==='sqlite_local'?'SQLite':'Лексический';

@@ -58,6 +58,11 @@ echo [Yorimiyu] Starting local dashboard...
 "%PY_EXE%" %PY_ARGS% -u "launcher.py" %*
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" goto failed
+echo.
+echo [Yorimiyu] Launcher has stopped normally.
+echo [INFO] If the browser did not open, check the URL printed above.
+echo [INFO] This window will remain open so you can read the status.
+pause
 goto done
 
 :no_python

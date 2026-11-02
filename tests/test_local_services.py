@@ -29,8 +29,17 @@ class LocalServicesTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT v FROM t").fetchone()[0],"hello")
             with self.assertRaises(ValueError):s.restore_backup(db,"../bad")
             db.close()
-    def test_neo4j_never_remote(self):
-        with patch.dict(os.environ,{"YORIMIYU_NEO4J_URL":"http://example.org:7474"}):
-            with self.assertRaises(ValueError):s.neo4j_config()
+    def test_sqlite_graph_is_local_and_agent_isolated(self):
+        with tempfile.TemporaryDirectory() as d,patch.object(s,"DATA",Path(d)),patch.object(s,"GRAPH_DB",Path(d)/"graph.sqlite3"):
+            self.assertEqual(s.graph_status()["backend"],"sqlite_local")
+            self.assertEqual(s.index_memory("agent-1",1,"Новая Москва — Новая Москва")["entities"],1)
+            graph=s.graph_view("agent-1")
+            self.assertEqual(graph["kind"],"sqlite_local")
+            self.assertTrue(any(n["kind"]=="entity" for n in graph["nodes"]))
+            self.assertTrue(any(e["source"]=="m1" for e in graph["edges"]))
+            self.assertEqual(s.graph_view("agent-2")["nodes"],[])
+            s.index_memory("agent-1",1,"Текст без сущностей")
+            self.assertEqual(s.graph_view("agent-1")["edges"],[])
+            with self.assertRaises(ValueError): s.graph_view("agent-1",query="x"*151)
 
 if __name__=="__main__": unittest.main()

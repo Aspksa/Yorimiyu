@@ -1,5 +1,4 @@
 """Local-only memory and agent registry; optional external services are not implied."""
-import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +25,13 @@ def connect(path=DB_PATH):
       created_at TEXT NOT NULL
     );
     """)
+    db.execute("""CREATE TABLE IF NOT EXISTS graphiti_outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      memory_id INTEGER NOT NULL UNIQUE,
+      agent_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending'
+    )""")
     db.commit()
     return db
 
@@ -50,7 +56,8 @@ def add_memory(db, agent_id, content):
     if not isinstance(content, str) or not 1 <= len(content.strip()) <= MAX_TEXT:
         raise ValueError("Текст памяти должен содержать от 1 до 16000 символов")
     cursor = db.execute("INSERT INTO memories(agent_id,content,created_at) VALUES(?,?,?)", (agent_id,content.strip(),now()))
-    db.commit()
+    from graphiti_adapter import queue_memory
+    queue_memory(db, cursor.lastrowid, agent_id, content.strip())
     return {"id": cursor.lastrowid}
 
 def list_memories(db, agent_id):

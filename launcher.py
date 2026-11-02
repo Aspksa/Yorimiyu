@@ -1,6 +1,8 @@
 """Local dashboard with safe single-instance reuse and diagnostic logs."""
 import argparse
 import json
+from urllib.parse import urlsplit, parse_qs
+from memory_bridge import connect, list_agents, create_agent, add_memory, list_memories, status
 import logging
 from logging.handlers import RotatingFileHandler
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +27,51 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB), **kwargs)
 
+    def _json(self, code, payload):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _allowed(self):
+        port = self.server.server_port
+        return self.headers.get("Host") == "127.0.0.1:" + str(port) and self.headers.get("Origin", "http://127.0.0.1:" + str(port)) == "http://127.0.0.1:" + str(port)
+
+    def do_POST(self):
+        if not self.path.startswith("/api/"):
+            self._json(404, {"error": "Не найдено"})
+            return
+        if not self._allowed():
+            self._json(403, {"error": "Только локальный доступ"})
+            return
+        if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
+            self._json(415, {"error": "Ожидается JSON"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 20000:
+                raise ValueError("Некорректный размер запроса")
+            data = json.loads(self.rfile.read(length))
+            if not isinstance(data, dict):
+                raise ValueError("Ожидается объект JSON")
+            with connect() as db:
+                if self.path == "/api/agents":
+                    result = {"agent": create_agent(db, data.get("name"))}
+                elif self.path == "/api/memories":
+                    result = {"memory": add_memory(db, data.get("agent_id"), data.get("content"))}
+                else:
+                    self._json(404, {"error": "Не найдено"})
+                    return
+            self._json(201, result)
+        except (ValueError, TypeError) as exc:
+            self._json(400, {"error": str(exc)})
+        except Exception:
+            logging.exception("API write failure")
+            self._json(500, {"error": "Внутренняя ошибка"})
+
     def do_GET(self):
         if self.path.split("?", 1)[0] == "/health":
             data = json.dumps({"status": "ok", "service": "yorimiyu-static-ui", "instanceId": TOKEN}).encode()
@@ -34,6 +81,29 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+            return
+        path = urlsplit(self.path)
+        if path.path.startswith("/api/"):
+            if not self._allowed():
+                self._json(403, {"error": "Только локальный доступ"})
+                return
+            try:
+                with connect() as db:
+                    if path.path == "/api/status":
+                        result = status(db)
+                    elif path.path == "/api/agents":
+                        result = {"agents": list_agents(db)}
+                    elif path.path == "/api/memories":
+                        result = {"memories": list_memories(db, parse_qs(path.query).get("agent_id", [""])[0])}
+                    else:
+                        self._json(404, {"error": "Не найдено"})
+                        return
+                self._json(200, result)
+            except (ValueError, TypeError) as exc:
+                self._json(400, {"error": str(exc)})
+            except Exception:
+                logging.exception("API read failure")
+                self._json(500, {"error": "Внутренняя ошибка"})
             return
         super().do_GET()
 
@@ -73,7 +143,7 @@ def main():
     STATE.parent.mkdir(parents=True, exist_ok=True)
     STATE.write_text(json.dumps({"port": server.server_port, "instanceId": TOKEN}), encoding="utf-8")
     logging.info("Yorimiyu dashboard: %s", url)
-    logging.info("Static UI only; Graphiti services are not running.")
+    logging.info("Local SQLite memory API enabled; Graphiti and Letta runtimes are not running.")
     if not args.no_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:

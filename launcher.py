@@ -3,6 +3,7 @@ import argparse
 import json
 from urllib.parse import urlsplit, parse_qs
 from memory_bridge import connect, list_agents, create_agent, add_memory, list_memories, status
+from graphiti_adapter import health as graphiti_health, list_pending
 import logging
 from logging.handlers import RotatingFileHandler
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -89,7 +90,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             try:
                 with connect() as db:
-                    if path.path == "/api/status":
+                    if path.path == "/api/graphiti/status":
+                        result = graphiti_health()
+                        result["queued"] = db.execute("SELECT count(*) FROM graphiti_outbox WHERE state='pending'").fetchone()[0]
+                    elif path.path == "/api/graphiti/outbox":
+                        result = {"events": list_pending(db)}
+                    elif path.path == "/api/status":
                         result = status(db)
                     elif path.path == "/api/agents":
                         result = {"agents": list_agents(db)}

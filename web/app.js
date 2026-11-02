@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
 let currentAgent = '';
-let useSQLiteGraph = false;
+let useSQLiteGraph = true;
 let graphQuery = '';
 async function api(path, options) {
   const response = await fetch(path, {credentials:'same-origin', ...options});

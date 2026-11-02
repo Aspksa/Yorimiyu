@@ -7,6 +7,8 @@ import subprocess
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+import socket
 import json
 from local_services import cloud_connection, graph_status, extract_entities, index_memory
 
@@ -93,7 +95,7 @@ def graph(db,agent_id):
 def runtime():
     command=os.environ.get("YORIMIYU_LETTA_COMMAND","").strip()
     return {"letta":{"state":"configured" if command and shutil.which(command) else ("missing_executable" if command else "not_configured")},
-            "llm":{"state":"configured" if all(cloud_connection()[:2]) else "not_configured"}, "neo4j":graph_status()}
+            "llm":{"state":"configured" if all(cloud_connection()) else "not_configured"}, "neo4j":graph_status()}
 
 def llm_reply(db,agent_id,prompt):
     base,model,cloud_key=cloud_connection()
@@ -109,9 +111,18 @@ def llm_reply(db,agent_id,prompt):
     key=cloud_key
     if key: headers["Authorization"]="Bearer "+key
     req=Request(base+("/chat/completions" if parsed.path=="/v1" else "/v1/chat/completions"),data=json.dumps(body).encode(),headers=headers,method="POST")
-    with urlopen(req,timeout=60) as response:
-        result=json.load(response)
-    answer=result["choices"][0]["message"]["content"]
+    try:
+        with urlopen(req,timeout=60) as response:
+            result=json.load(response)
+    except HTTPError as error:
+        messages_by_code={400:"Cloud.ru отклонил запрос (400): проверьте ID модели и параметры",401:"Cloud.ru: неверный или истёкший API-ключ (401)",403:"Cloud.ru: нет доступа к выбранной модели (403)",404:"Cloud.ru: модель или endpoint не найдены (404)",408:"Cloud.ru: время ожидания истекло (408)",413:"Cloud.ru: слишком длинный контекст (413)",429:"Cloud.ru: превышен лимит запросов или квота (429)",500:"Cloud.ru: внутренняя ошибка сервиса (500)",502:"Cloud.ru: ошибка шлюза (502)",503:"Cloud.ru: сервис временно недоступен (503)"}
+        raise ValueError(messages_by_code.get(error.code,"Cloud.ru: ошибка HTTP "+str(error.code))) from None
+    except (URLError,TimeoutError,socket.timeout):
+        raise ValueError("Нет ответа Cloud.ru: проверьте подключение и endpoint (ожидание до 60 секунд)") from None
+    try:
+        answer=result["choices"][0]["message"]["content"]
+    except (KeyError,IndexError,TypeError):
+        raise ValueError("Cloud.ru вернул неожиданный формат ответа") from None
     if not isinstance(answer,str) or not answer.strip():
         raise RuntimeError("Модель вернула пустой ответ")
     return answer[:16000]
@@ -120,8 +131,8 @@ def send_chat(db,agent_id,content):
     valid_agent(db,agent_id)
     if not isinstance(content,str) or not 1<=len(content.strip())<=8000:
         raise ValueError("Сообщение должно содержать 1–8000 символов")
-    if not all(cloud_connection()[:2]):
-        raise ValueError("Модель не настроена. Укажите YORIMIYU_LLM_URL и YORIMIYU_LLM_MODEL")
+    if not all(cloud_connection()):
+        raise ValueError("Модель не настроена: укажите HTTPS endpoint, ID модели и API-ключ")
     db.execute("INSERT INTO chat_messages(agent_id,role,content,created_at) VALUES(?,?,?,?)",(agent_id,"user",content.strip(),datetime.now(timezone.utc).isoformat()))
     db.commit()
     # Automatic *suggestions*, not autonomous permanent memories.

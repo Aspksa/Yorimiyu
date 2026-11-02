@@ -184,6 +184,9 @@ def acquire_instance_lock(timeout=20):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             return handle
         except (OSError, BlockingIOError):
+            if existing_url() is not None:
+                handle.close()
+                return None
             if time.monotonic() >= deadline:
                 handle.close()
                 return None

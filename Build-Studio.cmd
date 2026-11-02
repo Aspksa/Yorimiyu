@@ -33,8 +33,11 @@ if errorlevel 1 goto node_old
 if exist "frontend\node_modules\.yorimiyu-package.json" if exist "web\studio\index.html" (
   fc /b "frontend\package.json" "frontend\node_modules\.yorimiyu-package.json" >nul 2>&1
   if not errorlevel 1 (
-    echo [Yorimiyu] Visual Studio dependencies and bundle are already prepared.
-    goto success
+    powershell.exe -NoProfile -NonInteractive -Command "$out=(Get-Item 'web/studio/index.html').LastWriteTimeUtc; $files=Get-ChildItem 'frontend/src' -File -Recurse; $files+=Get-Item 'frontend/vite.config.ts'; if(@($files | Where-Object {$_.LastWriteTimeUtc -gt $out}).Count -eq 0){exit 0}else{exit 1}" >nul 2>&1
+    if not errorlevel 1 (
+      echo [Yorimiyu] Visual Studio dependencies and bundle are already prepared.
+      goto success
+    )
   )
 )
 echo [Yorimiyu] Installing and checking React Visual Studio...

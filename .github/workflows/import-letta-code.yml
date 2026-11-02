@@ -1,0 +1,49 @@
+name: Import Letta Code upstream
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/import-letta-code.yml'
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Yorimiyu
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+      - name: Clone Letta Code upstream (do not execute)
+        run: git clone --depth 1 https://github.com/letta-ai/letta-code.git /tmp/letta-code
+      - name: Preserve source snapshot and license
+        shell: bash
+        run: |
+          test -f /tmp/letta-code/LICENSE
+          test -f /tmp/letta-code/README.md
+          mkdir -p vendor/letta-code
+          rsync -a --delete --exclude='.git/' /tmp/letta-code/ vendor/letta-code/
+          git -C /tmp/letta-code rev-parse HEAD > vendor/letta-code/UPSTREAM_COMMIT
+          test -f vendor/letta-code/LICENSE
+          test -f vendor/letta-code/README.md
+      - name: Open reviewable source import PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          branch="import/letta-code-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add vendor/letta-code
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "Vendor Letta Code source snapshot with upstream license"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" --title "Import complete Letta Code source into Yorimiyu" --body "Vendor snapshot from letta-ai/letta-code with original Apache-2.0 license and UPSTREAM_COMMIT. Source is NOT executed by this workflow. Review dependencies, secrets, licensing notices, and tests before merge. This does not connect Letta to Graphiti or Yorimiyu."

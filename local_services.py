@@ -6,6 +6,9 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+import socket
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
@@ -53,6 +56,35 @@ def save_cloud(data):
 def cloud_connection():
     cfg=_config()
     return cfg.get("endpoint") or os.environ.get("YORIMIYU_LLM_URL",""), cfg.get("model") or os.environ.get("YORIMIYU_LLM_MODEL",""), cfg.get("api_key") or os.environ.get("YORIMIYU_LLM_API_KEY","")
+
+
+def _cloud_models_url(endpoint):
+    parsed=urlsplit(endpoint.rstrip("/"))
+    if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("","/v1"):
+        raise ValueError("Укажите корректный HTTPS endpoint (/v1)")
+    return endpoint.rstrip("/") + ("/models" if parsed.path=="/v1" else "/v1/models")
+
+def cloud_models():
+    endpoint,model,key=cloud_connection()
+    if not endpoint:
+        raise ValueError("Сначала сохраните HTTPS endpoint Cloud.ru")
+    if not key:
+        raise ValueError("Сначала сохраните API-ключ Cloud.ru")
+    request=Request(_cloud_models_url(endpoint),headers={"Authorization":"Bearer "+key,"Accept":"application/json"},method="GET")
+    try:
+        with urlopen(request,timeout=12) as response:
+            payload=json.load(response)
+    except HTTPError as error:
+        codes={401:"Неверный или истёкший API-ключ (401)",403:"Нет доступа к моделям (403)",404:"Endpoint не поддерживает /models (404)",429:"Лимит запросов или квота Cloud.ru (429)"}
+        raise ValueError(codes.get(error.code,"Ошибка Cloud.ru HTTP "+str(error.code))) from None
+    except (URLError,TimeoutError,socket.timeout):
+        raise ValueError("Cloud.ru недоступен: проверьте сеть и endpoint") from None
+    except (ValueError,TypeError):
+        raise ValueError("Cloud.ru вернул некорректный список моделей") from None
+    if not isinstance(payload,dict) or not isinstance(payload.get("data"),list):
+        raise ValueError("Endpoint не вернул список моделей в формате OpenAI")
+    models=sorted({item["id"] for item in payload["data"] if isinstance(item,dict) and isinstance(item.get("id"),str) and item["id"] and len(item["id"])<=150})
+    return {"connected":True,"models":models[:300],"selected_model":model,"total":len(models)}
 
 # Built-in SQLite graph. No Docker, Neo4j, Java, or third-party packages.
 GRAPH_DB = DATA / "knowledge-graph.sqlite3"

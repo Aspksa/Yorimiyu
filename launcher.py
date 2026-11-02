@@ -15,7 +15,7 @@ import threading
 import time
 import os
 import webbrowser
-from local_services import settings_public, save_cloud, graph_status, graph_view, index_memory, backup, list_backups, restore_backup
+from local_services import settings_public, save_cloud, cloud_models, graph_status, graph_view, index_memory, backup, list_backups, restore_backup
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parent
@@ -153,6 +153,8 @@ class Handler(SimpleHTTPRequestHandler):
                         result = graph_status()
                     elif path.path == "/api/cloud/settings":
                         result = settings_public()
+                    elif path.path == "/api/cloud/models":
+                        result = cloud_models()
                     elif path.path == "/api/backups":
                         result = {"backups":list_backups()}
                     elif path.path == "/api/runtime":

@@ -170,6 +170,7 @@ async function loadCloud() {
   const config=await api('/api/cloud/settings');
   $('cloud-endpoint').value=config.endpoint||'';
   $('cloud-model').value=config.model||'';
+  $('cloud-model-select').replaceChildren(new Option('Укажите ID модели вручную',''));
   $('cloud-state').textContent=config.has_key?'Ключ сохранён локально':'Ключ ещё не сохранён';
 }
 $('cloud-form').onsubmit=async e=>{
@@ -179,8 +180,21 @@ $('cloud-form').onsubmit=async e=>{
     $('cloud-key').value='';
     $('cloud-state').textContent=config.has_key?'Cloud.ru сохранён локально':'Настройки сохранены, ключ отсутствует';
     await refresh();
+    $('cloud-diagnostics').textContent='Настройки сохранены. Для проверки связи нажмите кнопку ниже.';
   }catch(err){$('cloud-state').textContent=err.message;}
 };
+$('cloud-model-select').addEventListener('change',()=>{if($('cloud-model-select').value)$('cloud-model').value=$('cloud-model-select').value;});
+$('cloud-test').addEventListener('click',async()=>{
+  const button=$('cloud-test');button.disabled=true;$('cloud-diagnostics').textContent='Проверяем ключ, endpoint и доступные модели…';
+  try{
+    const result=await api('/api/cloud/models');
+    const options=[new Option('Укажите ID модели вручную',''),...result.models.map(id=>new Option(id,id))];
+    $('cloud-model-select').replaceChildren(...options);
+    $('cloud-model-select').value=result.models.includes($('cloud-model').value)?$('cloud-model').value:'';
+    $('cloud-diagnostics').textContent='Связь установлена. Доступных моделей: '+result.total+(result.total>300?' (показаны первые 300)':'')+'. Выберите модель и сохраните настройки.';
+  }catch(error){$('cloud-diagnostics').textContent='Проверка не пройдена: '+error.message;}
+  finally{button.disabled=false;}
+});
 $('graph-search-form').onsubmit=async e=>{
   e.preventDefault();if(!currentAgent)return;
   graphQuery=$('graph-query').value;useSQLiteGraph=true;

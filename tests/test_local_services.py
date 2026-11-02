@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from io import BytesIO
+from urllib.error import HTTPError
 import local_services as s
 
 class LocalServicesTests(unittest.TestCase):
@@ -17,6 +19,23 @@ class LocalServicesTests(unittest.TestCase):
             self.assertNotIn("very-secret",str(s.settings_public()))
             with self.assertRaises(ValueError):
                 s.save_cloud({"endpoint":"http://evil.test/v1","model":"model-1"})
+    def test_cloud_models_connection_and_secret_handling(self):
+        with tempfile.TemporaryDirectory() as d, patch.object(s,"DATA",Path(d)), patch.object(s,"CONFIG",Path(d)/"settings.json"):
+            s.save_cloud({"endpoint":"https://example.org/v1","model":"model-a","api_key":"private-token"})
+            class Response:
+                def __enter__(self): return BytesIO(b'{"data":[{"id":"model-b"},{"id":"model-a"}]}')
+                def __exit__(self,*args): return False
+            def fake_open(request,timeout):
+                self.assertEqual(request.full_url,"https://example.org/v1/models")
+                self.assertEqual(request.get_header("Authorization"),"Bearer private-token")
+                self.assertLessEqual(timeout,15)
+                return Response()
+            with patch.object(s,"urlopen",side_effect=fake_open):
+                result=s.cloud_models()
+            self.assertEqual(result["models"],["model-a","model-b"])
+            self.assertNotIn("private-token",str(result))
+            with patch.object(s,"urlopen",side_effect=HTTPError("https://example.org/v1/models",429,"limit",{},None)):
+                with self.assertRaisesRegex(ValueError,"429"):s.cloud_models()
     def test_sqlite_backup(self):
         with tempfile.TemporaryDirectory() as d,patch.object(s,"BACKUPS",Path(d)):
             db=sqlite3.connect(":memory:")

@@ -45,6 +45,12 @@ class PortableLaunchTests(unittest.TestCase):
                                         capture_output=True, text=True, timeout=8)
                 self.assertEqual(second.returncode, 0, second.stderr)
                 self.assertIn("Already running", second.stdout)
+                if os.name == "nt":
+                    shutil.copy2(ROOT / "Yorimiyu.bat", folder / "Yorimiyu.bat")
+                    bat = subprocess.run(["cmd.exe", "/d", "/c", "Yorimiyu.bat --no-browser"],
+                                         cwd=folder, input="\n", capture_output=True,
+                                         text=True, errors="replace", timeout=12)
+                    self.assertEqual(bat.returncode, 0, bat.stdout + bat.stderr)
                 with urlopen(url, timeout=2) as response:
                     self.assertEqual(json.load(response)["status"], "ok")
             finally:

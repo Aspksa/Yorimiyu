@@ -1,0 +1,35 @@
+name: Yorimiyu launcher tests
+on:
+  push:
+    paths:
+      - 'launcher.py'
+      - 'Yorimiyu.bat'
+      - 'web/**'
+      - 'tests/**'
+      - '.github/workflows/launcher-tests.yml'
+  pull_request:
+    paths:
+      - 'launcher.py'
+      - 'Yorimiyu.bat'
+      - 'web/**'
+      - 'tests/**'
+      - '.github/workflows/launcher-tests.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test local dashboard
+        run: python -m unittest discover -s tests -v
+      - name: Check Windows BAT entry
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: Yorimiyu.bat --no-browser

@@ -13,7 +13,7 @@ async function refresh() {
   try {
     const [status, agents, graphiti, runtimes] = await Promise.all([api('/api/status'),api('/api/agents'),api('/api/graphiti/status'),api('/api/runtime')]);
     $('letta-state').textContent = runtimes.letta.state;
-    $('sqliteGraph-state').textContent = runtimes.sqliteGraph?.state || 'offline';
+    $('sqliteGraph-state').textContent = runtimes.neo4j?.state || 'offline';
     $('llm-state').textContent = runtimes.llm.state;
     $('graphiti-state').textContent = graphiti.state + ' · очередь: ' + graphiti.queued;
     $('connection-status').textContent = 'Локальная память работает';

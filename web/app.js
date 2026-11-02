@@ -1,5 +1,7 @@
 const $ = id => document.getElementById(id);
 let currentAgent = '';
+let useNeo4j = false;
+let graphQuery = '';
 async function api(path, options) {
   const response = await fetch(path, {credentials:'same-origin', ...options});
   const result = await response.json();
@@ -11,6 +13,7 @@ async function refresh() {
   try {
     const [status, agents, graphiti, runtimes] = await Promise.all([api('/api/status'),api('/api/agents'),api('/api/graphiti/status'),api('/api/runtime')]);
     $('letta-state').textContent = runtimes.letta.state;
+    $('neo4j-state').textContent = runtimes.neo4j?.state || 'offline';
     $('llm-state').textContent = runtimes.llm.state;
     $('graphiti-state').textContent = graphiti.state + ' · очередь: ' + graphiti.queued;
     $('connection-status').textContent = 'Локальная память работает';
@@ -64,7 +67,7 @@ async function refreshWorkspace() {
   if (!currentAgent) return;
   const [chat, graphData, learning] = await Promise.all([
     api('/api/chat?agent_id='+encodeURIComponent(currentAgent)),
-    api('/api/graph?agent_id='+encodeURIComponent(currentAgent)),
+    api((useNeo4j ? '/api/neo4j/graph?agent_id=' : '/api/graph?agent_id=')+encodeURIComponent(currentAgent)+(useNeo4j?'&q='+encodeURIComponent(graphQuery):'')),
     api('/api/learning?agent_id='+encodeURIComponent(currentAgent))
   ]);
   $('chat-history').replaceChildren(...chat.messages.map(m=>{
@@ -89,7 +92,7 @@ async function refreshWorkspace() {
     const title=document.createElementNS(svg.namespaceURI,'title');title.textContent=n.label;circle.append(title);svg.append(circle);
   });
   $('graph-canvas').append(svg);
-  $('graph-summary').textContent=nodes.length+' записей · '+edges.length+' лексических связей (не Graphiti)';
+  $('graph-summary').textContent=nodes.length+' узлов · '+edges.length+' связей · '+graphData.kind;
   $('learning-list').replaceChildren(...learning.suggestions.map(s=>{
     const box=document.createElement('div');box.className='suggestion';
     box.append(node('p',s.content),node('small',s.state));
@@ -134,3 +137,54 @@ $('letta-form').onsubmit=async event=>{
   catch(e){$('letta-result').textContent=e.message;}
   finally{button.disabled=false;}
 };
+
+const jsonPost = (path,body) => api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+async function loadCloud() {
+  const config=await api('/api/cloud/settings');
+  $('cloud-endpoint').value=config.endpoint||'';
+  $('cloud-model').value=config.model||'';
+  $('cloud-state').textContent=config.has_key?'Ключ сохранён локально':'Ключ ещё не сохранён';
+}
+$('cloud-form').onsubmit=async e=>{
+  e.preventDefault();
+  try{
+    const config=await jsonPost('/api/cloud/settings',{endpoint:$('cloud-endpoint').value,model:$('cloud-model').value,api_key:$('cloud-key').value});
+    $('cloud-key').value='';
+    $('cloud-state').textContent=config.has_key?'Cloud.ru сохранён локально':'Настройки сохранены, ключ отсутствует';
+    await refresh();
+  }catch(err){$('cloud-state').textContent=err.message;}
+};
+$('graph-search-form').onsubmit=async e=>{
+  e.preventDefault();if(!currentAgent)return;
+  graphQuery=$('graph-query').value;useNeo4j=true;
+  try{await refreshWorkspace();$('graph-action-state').textContent='Граф Neo4j загружен';}
+  catch(err){$('graph-action-state').textContent='Neo4j: '+err.message;}
+};
+$('graph-index').onclick=async()=>{
+  if(!currentAgent)return alert('Выберите агента');
+  $('graph-index').disabled=true;
+  try{
+    const result=await jsonPost('/api/neo4j/index',{agent_id:currentAgent});
+    $('graph-action-state').textContent='Индексировано: '+result.indexed;
+    useNeo4j=true;await refreshWorkspace();
+  }catch(err){$('graph-action-state').textContent=err.message;}
+  finally{$('graph-index').disabled=false;}
+};
+async function loadBackups(){
+  const data=await api('/api/backups');
+  $('backup-list').replaceChildren(...data.backups.map(b=>{
+    const row=node('div',b.name+' · '+b.bytes+' байт ');
+    const button=node('button','Восстановить');
+    button.type='button';button.onclick=async()=>{
+      if(!confirm('Восстановление заменит текущую SQLite память. Перед операцией будет создана копия. Продолжить?'))return;
+      try{await jsonPost('/api/backup/restore',{name:b.name,confirm:true});$('backup-state').textContent='Восстановлено: '+b.name;await refresh();}
+      catch(err){$('backup-state').textContent=err.message;}
+    };row.append(button);return row;
+  }));
+}
+$('backup-create').onclick=async()=>{
+  try{const b=await jsonPost('/api/backup',{});$('backup-state').textContent='Создана копия: '+b.name;await loadBackups();}
+  catch(err){$('backup-state').textContent=err.message;}
+};
+loadCloud().catch(err=>{$('cloud-state').textContent=err.message;});
+loadBackups().catch(err=>{$('backup-state').textContent=err.message;});

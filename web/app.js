@@ -188,3 +188,36 @@ $('backup-create').onclick=async()=>{
 };
 loadCloud().catch(err=>{$('cloud-state').textContent=err.message;});
 loadBackups().catch(err=>{$('backup-state').textContent=err.message;});
+
+
+/* Browser-only appearance preferences: never include credentials. */
+(()=>{
+ const keys=['theme','accent','radius','size'];
+ const defaults={theme:'light',accent:'red',radius:'soft',size:'normal'};
+ function apply(){
+   for(const key of keys){
+     const el=document.getElementById('appearance-'+key);
+     if(!el)continue;
+     let saved=defaults[key];
+     try{saved=localStorage.getItem('yorimiyu-appearance-'+key)||saved}catch(_){}
+     if(![...el.options].some(o=>o.value===saved))saved=defaults[key];
+     el.value=saved;
+     document.body.dataset[key]=key==='theme'&&saved==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):saved;
+     el.addEventListener('change',()=>{
+       try{localStorage.setItem('yorimiyu-appearance-'+key,el.value)}catch(_){}
+       applyValues();
+     });
+   }
+   try{document.body.classList.toggle('sidebar-collapsed',localStorage.getItem('yorimiyu-sidebar')==='collapsed')}catch(_){}
+ }
+ function applyValues(){for(const key of keys){const el=document.getElementById('appearance-'+key);if(el)document.body.dataset[key]=key==='theme'&&el.value==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):el.value}}
+ function init(){
+   apply();
+   const toggle=document.getElementById('sidebar-toggle');
+   if(toggle)toggle.addEventListener('click',()=>{document.body.classList.toggle('sidebar-collapsed');try{localStorage.setItem('yorimiyu-sidebar',document.body.classList.contains('sidebar-collapsed')?'collapsed':'expanded')}catch(_){}});
+   const form=document.getElementById('appearance-form');if(form)form.addEventListener('submit',e=>e.preventDefault());
+   document.querySelectorAll('.sidebar nav a').forEach(a=>a.addEventListener('click',()=>{document.querySelectorAll('.sidebar nav a').forEach(x=>x.classList.remove('active'));a.classList.add('active')}));
+   window.addEventListener('hashchange',()=>{document.querySelectorAll('.sidebar nav a').forEach(a=>a.classList.toggle('active',a.hash===location.hash))});
+ }
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+})();

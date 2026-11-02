@@ -20,6 +20,11 @@ try {
     Log 'Checking portable Python'
     $exe = Join-Path $target 'python.exe'
     if (Test-Path -LiteralPath $exe) {
+        $existingPth = Get-ChildItem -LiteralPath $target -Filter 'python*._pth' | Select-Object -First 1
+        if ($existingPth) {
+            $lines = @(Get-Content -LiteralPath $existingPth.FullName)
+            if ($lines -notcontains '.') { Add-Content -LiteralPath $existingPth.FullName -Value '.' -Encoding ASCII }
+        }
         & $exe -c 'import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>$null
         if ($LASTEXITCODE -eq 0) { Log 'Portable Python is ready'; exit 0 }
     }

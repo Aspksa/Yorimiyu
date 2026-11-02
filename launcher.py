@@ -4,6 +4,7 @@ import json
 from urllib.parse import urlsplit, parse_qs
 from memory_bridge import connect, list_agents, create_agent, add_memory, list_memories, status
 from graphiti_adapter import health as graphiti_health, list_pending
+from graphiti_delivery import deliver_one
 import logging
 from logging.handlers import RotatingFileHandler
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -59,7 +60,11 @@ class Handler(SimpleHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError("Ожидается объект JSON")
             with connect() as db:
-                if self.path == "/api/agents":
+                if self.path == "/api/graphiti/deliver":
+                    if data.get("confirm") is not True:
+                        raise ValueError("Для передачи данных требуется явное подтверждение")
+                    result = {"delivery": deliver_one(db)}
+                elif self.path == "/api/agents":
                     result = {"agent": create_agent(db, data.get("name"))}
                 elif self.path == "/api/memories":
                     result = {"memory": add_memory(db, data.get("agent_id"), data.get("content"))}

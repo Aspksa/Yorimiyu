@@ -49,10 +49,10 @@ where powershell.exe >nul 2>&1
 if errorlevel 1 goto no_powershell
 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "install-python.ps1"
 if errorlevel 1 goto python_install_failed
-if not exist ".runtime\\python\\python.exe" goto python_install_failed
-".runtime\\python\\python.exe" -c "import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
+if not exist ".runtime\python\\python.exe" goto python_install_failed
+".runtime\python\\python.exe" -c "import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
 if errorlevel 1 goto python_install_failed
-set "PY_EXE=.runtime\\python\\python.exe"
+set "PY_EXE=.runtime\python\\python.exe"
 set "PY_ARGS="
 goto start
 
@@ -62,7 +62,7 @@ set "RC=2"
 goto failed
 
 :python_install_failed
-echo [ERROR] Automatic Python setup failed. Check .runtime\\python-install.log
+echo [ERROR] Automatic Python setup failed. Check .runtime\python-install.log
 echo [INFO] Internet access to www.python.org is required for first setup.
 set "RC=2"
 goto failed

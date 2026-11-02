@@ -166,35 +166,49 @@ $('letta-form').onsubmit=async event=>{
 };
 
 const jsonPost = (path,body) => api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+async function fetchCloudModels({autoSelect=false}={}) {
+ const button=$('cloud-test');button.disabled=true;
+ $('cloud-diagnostics').textContent='Загружаем доступные модели Cloud.ru…';
+ try {
+   const result=await api('/api/cloud/models');
+   const ids=Array.isArray(result.models)?result.models:[];
+   $('cloud-model-select').replaceChildren(new Option('Выберите модель',''),...ids.map(id=>new Option(id,id)));
+   const saved=$('cloud-model').value||result.selected_model||'';
+   const choice=ids.includes(saved)?saved:(autoSelect?ids[0]||'':'');
+   if(choice){$('cloud-model-select').value=choice;$('cloud-model').value=choice;}
+   $('cloud-diagnostics').textContent=ids.length?'Загружено моделей: '+result.total+'. Выберите модель для чата.':'Список моделей пуст. Проверьте права API-ключа.';
+   if(autoSelect&&choice&&choice!==result.selected_model) {
+     await jsonPost('/api/cloud/settings',{model:choice});
+     $('cloud-state').textContent='Модель выбрана и сохранена: '+choice;
+   }
+ }catch(err){$('cloud-diagnostics').textContent='Не удалось загрузить модели: '+err.message;}
+ finally{button.disabled=false;}
+}
 async function loadCloud() {
-  const config=await api('/api/cloud/settings');
-  $('cloud-endpoint').value=config.endpoint||'';
-  $('cloud-model').value=config.model||'';
-  $('cloud-model-select').replaceChildren(new Option('Укажите ID модели вручную',''));
-  $('cloud-state').textContent=config.has_key?'Ключ сохранён локально':'Ключ ещё не сохранён';
+ const config=await api('/api/cloud/settings');
+ $('cloud-model').value=config.model||'';
+ $('cloud-model-select').replaceChildren(new Option('Модели загрузятся после сохранения ключа',''));
+ $('cloud-state').textContent=config.has_key?'Ключ сохранён локально':'Ключ ещё не сохранён';
+ if(config.has_key)await fetchCloudModels({autoSelect:true});
 }
 $('cloud-form').onsubmit=async e=>{
-  e.preventDefault();
-  try{
-    const config=await jsonPost('/api/cloud/settings',{endpoint:$('cloud-endpoint').value,model:$('cloud-model').value,api_key:$('cloud-key').value});
-    $('cloud-key').value='';
-    $('cloud-state').textContent=config.has_key?'Cloud.ru сохранён локально':'Настройки сохранены, ключ отсутствует';
-    await refresh();
-    $('cloud-diagnostics').textContent='Настройки сохранены. Для проверки связи нажмите кнопку ниже.';
-  }catch(err){$('cloud-state').textContent=err.message;}
+ e.preventDefault();
+ try {
+   const config=await jsonPost('/api/cloud/settings',{model:$('cloud-model').value,api_key:$('cloud-key').value});
+   $('cloud-key').value='';
+   $('cloud-state').textContent=config.has_key?'Cloud.ru сохранён локально':'Настройки сохранены, ключ отсутствует';
+   if(config.has_key)await fetchCloudModels({autoSelect:true});
+   await refresh();
+ }catch(err){$('cloud-state').textContent=err.message;}
 };
-$('cloud-model-select').addEventListener('change',()=>{if($('cloud-model-select').value)$('cloud-model').value=$('cloud-model-select').value;});
-$('cloud-test').addEventListener('click',async()=>{
-  const button=$('cloud-test');button.disabled=true;$('cloud-diagnostics').textContent='Проверяем ключ, endpoint и доступные модели…';
-  try{
-    const result=await api('/api/cloud/models');
-    const options=[new Option('Укажите ID модели вручную',''),...result.models.map(id=>new Option(id,id))];
-    $('cloud-model-select').replaceChildren(...options);
-    $('cloud-model-select').value=result.models.includes($('cloud-model').value)?$('cloud-model').value:'';
-    $('cloud-diagnostics').textContent='Связь установлена. Доступных моделей: '+result.total+(result.total>300?' (показаны первые 300)':'')+'. Выберите модель и сохраните настройки.';
-  }catch(error){$('cloud-diagnostics').textContent='Проверка не пройдена: '+error.message;}
-  finally{button.disabled=false;}
+$('cloud-model-select').addEventListener('change',async()=>{
+ const model=$('cloud-model-select').value;
+ if(!model)return;
+ $('cloud-model').value=model;
+ try{await jsonPost('/api/cloud/settings',{model});$('cloud-state').textContent='Модель сохранена: '+model;}
+ catch(err){$('cloud-state').textContent='Не удалось сохранить модель: '+err.message;}
 });
+$('cloud-test').addEventListener('click',()=>fetchCloudModels({autoSelect:true}));
 $('graph-search-form').onsubmit=async e=>{
   e.preventDefault();if(!currentAgent)return;
   graphQuery=$('graph-query').value;useSQLiteGraph=true;

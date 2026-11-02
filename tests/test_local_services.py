@@ -17,8 +17,9 @@ class LocalServicesTests(unittest.TestCase):
             s.save_cloud({"endpoint":"https://example.org/v1","model":"model-1","api_key":"very-secret"})
             self.assertTrue(s.settings_public()["has_key"])
             self.assertNotIn("very-secret",str(s.settings_public()))
-            with self.assertRaises(ValueError):
-                s.save_cloud({"endpoint":"http://evil.test/v1","model":"model-1"})
+            self.assertEqual(s.settings_public()["endpoint"],s.CLOUD_BASE_URL)
+            s.save_cloud({"endpoint":"http://evil.test/v1","model":"model-1"})
+            self.assertEqual(s.settings_public()["endpoint"],s.CLOUD_BASE_URL)
     def test_cloud_models_connection_and_secret_handling(self):
         with tempfile.TemporaryDirectory() as d, patch.object(s,"DATA",Path(d)), patch.object(s,"CONFIG",Path(d)/"settings.json"):
             s.save_cloud({"endpoint":"https://example.org/v1","model":"model-a","api_key":"private-token"})
@@ -26,7 +27,7 @@ class LocalServicesTests(unittest.TestCase):
                 def __enter__(self): return BytesIO(b'{"data":[{"id":"model-b"},{"id":"model-a"}]}')
                 def __exit__(self,*args): return False
             def fake_open(request,timeout):
-                self.assertEqual(request.full_url,"https://example.org/v1/models")
+                self.assertEqual(request.full_url,s.CLOUD_BASE_URL+"/models")
                 self.assertEqual(request.get_header("Authorization"),"Bearer private-token")
                 self.assertLessEqual(timeout,15)
                 return Response()

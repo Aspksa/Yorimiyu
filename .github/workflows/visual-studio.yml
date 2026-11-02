@@ -1,0 +1,34 @@
+name: Visual Studio frontend
+on:
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - 'Build-Studio.cmd'
+      - '.github/workflows/visual-studio.yml'
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+      - name: TypeScript check
+        working-directory: frontend
+        run: npm run check
+      - name: Production build
+        working-directory: frontend
+        run: npm run build
+      - name: Upload studio bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: yorimiyu-visual-studio
+          path: web/studio/
+          if-no-files-found: error

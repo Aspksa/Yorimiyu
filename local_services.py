@@ -1,14 +1,10 @@
-"""Local-only Neo4j graph, Cloud.ru settings and safe SQLite backups."""
-import base64
+"""Docker-free SQLite knowledge graph, Cloud.ru settings and safe backups."""
 import json
 import os
 from pathlib import Path
 import re
-import shutil
 import sqlite3
-import tempfile
 from datetime import datetime, timezone
-from urllib.request import Request, urlopen
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
@@ -58,73 +54,72 @@ def cloud_connection():
     cfg=_config()
     return cfg.get("endpoint") or os.environ.get("YORIMIYU_LLM_URL",""), cfg.get("model") or os.environ.get("YORIMIYU_LLM_MODEL",""), cfg.get("api_key") or os.environ.get("YORIMIYU_LLM_API_KEY","")
 
-def neo4j_config():
-    url=os.environ.get("YORIMIYU_NEO4J_URL","http://127.0.0.1:7474").rstrip("/")
-    p=urlsplit(url)
-    if p.scheme!="http" or p.hostname not in ("127.0.0.1","localhost") or p.port!=7474 or p.username or p.password or p.query or p.fragment or p.path:
-        raise ValueError("Neo4j HTTP must be on local port 7474")
-    password=os.environ.get("YORIMIYU_NEO4J_PASSWORD","")
-    if not password:
-        secret=ROOT / ".runtime" / "neo4j-local.json"
-        if secret.is_file():
-            password=json.loads(secret.read_text(encoding="utf-8-sig")).get("password","")
-    return url,os.environ.get("YORIMIYU_NEO4J_USER","neo4j"),password
+# Built-in SQLite graph. No Docker, Neo4j, Java, or third-party packages.
+GRAPH_DB = DATA / "knowledge-graph.sqlite3"
 
-def cypher(statement,parameters=None):
-    url,user,password=neo4j_config()
-    if not password:
-        raise ValueError("Set YORIMIYU_NEO4J_PASSWORD locally; no default password")
-    token=base64.b64encode((user+":"+password).encode()).decode()
-    body=json.dumps({"statements":[{"statement":statement,"parameters":parameters or {}}]}).encode()
-    req=Request(url+"/db/neo4j/tx/commit",data=body,headers={"Authorization":"Basic "+token,"Content-Type":"application/json"},method="POST")
-    with urlopen(req,timeout=8) as response:
-        payload=json.load(response)
-    if payload.get("errors"):
-        raise ValueError("Neo4j query failed: "+str(payload["errors"][0].get("code","unknown")))
-    return payload.get("results",[{}])[0].get("data",[])
+def _graph_db():
+    DATA.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(str(GRAPH_DB), timeout=10)
+    db.execute("PRAGMA busy_timeout=10000")
+    db.execute("""CREATE TABLE IF NOT EXISTS graph_memories (
+        agent TEXT NOT NULL, id INTEGER NOT NULL, content TEXT NOT NULL,
+        updated TEXT NOT NULL, PRIMARY KEY(agent,id))""")
+    db.execute("""CREATE TABLE IF NOT EXISTS graph_entities (
+        agent TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(agent,name))""")
+    db.execute("""CREATE TABLE IF NOT EXISTS graph_mentions (
+        agent TEXT NOT NULL, memory_id INTEGER NOT NULL, entity_name TEXT NOT NULL,
+        PRIMARY KEY(agent,memory_id,entity_name))""")
+    db.execute("CREATE INDEX IF NOT EXISTS graph_mentions_entity ON graph_mentions(agent,entity_name)")
+    return db
 
 def graph_status():
     try:
-        cypher("RETURN 1 AS ready")
-        return {"state":"connected","backend":"neo4j_local"}
-    except Exception:
-        return {"state":"offline","backend":"neo4j_local"}
+        with _graph_db() as db:
+            db.execute("SELECT 1").fetchone()
+        return {"state":"connected","backend":"sqlite_local"}
+    except sqlite3.Error:
+        return {"state":"offline","backend":"sqlite_local"}
 
 def extract_entities(text):
     """Conservative offline extraction: explicit capitalized multiword names only."""
     if not isinstance(text,str): return []
-    matches=re.findall(r"(?<!\w)[A-ZА-ЯЁ][\wА-Яа-яЁё-]+(?:\s+[A-ZА-ЯЁ][\wА-Яа-яЁё-]+){1,2}",text)
+    matches=re.findall(r"(?<!\\w)[A-ZА-ЯЁ][\\wА-Яа-яЁё-]+(?:\\s+[A-ZА-ЯЁ][\\wА-Яа-яЁё-]+){1,2}",text)
     return list(dict.fromkeys(matches))[:15]
 
 def index_memory(agent_id,memory_id,content):
-    if not isinstance(agent_id,str) or not isinstance(memory_id,int):
-        raise ValueError("Invalid memory identifier")
+    if not isinstance(agent_id,str) or not 1<=len(agent_id)<=128 or not isinstance(memory_id,int) or memory_id<1 or not isinstance(content,str):
+        raise ValueError("Invalid memory identifier or content")
     entities=extract_entities(content)
-    cypher("MERGE (m:YorimiyuMemory {agent:$agent,id:$id}) SET m.text=$text,m.updated=$updated",
-           {"agent":agent_id,"id":memory_id,"text":content[:16000],"updated":datetime.now(timezone.utc).isoformat()})
-    for name in entities:
-        cypher("MERGE (e:YorimiyuEntity {agent:$agent,name:$name}) WITH e MATCH (m:YorimiyuMemory {agent:$agent,id:$id}) MERGE (m)-[:MENTIONS]->(e)",
-               {"agent":agent_id,"id":memory_id,"name":name})
+    with _graph_db() as db:
+        db.execute("INSERT INTO graph_memories(agent,id,content,updated) VALUES(?,?,?,?) ON CONFLICT(agent,id) DO UPDATE SET content=excluded.content,updated=excluded.updated",
+                   (agent_id,memory_id,content[:16000],datetime.now(timezone.utc).isoformat()))
+        db.execute("DELETE FROM graph_mentions WHERE agent=? AND memory_id=?",(agent_id,memory_id))
+        for name in entities:
+            db.execute("INSERT OR IGNORE INTO graph_entities(agent,name) VALUES(?,?)",(agent_id,name))
+            db.execute("INSERT OR IGNORE INTO graph_mentions(agent,memory_id,entity_name) VALUES(?,?,?)",(agent_id,memory_id,name))
     return {"entities":len(entities)}
 
 def graph_view(agent_id,query="",limit=150):
-    if not isinstance(agent_id,str) or len(agent_id)>128 or not isinstance(query,str) or len(query)>150:
+    if not isinstance(agent_id,str) or not 1<=len(agent_id)<=128 or not isinstance(query,str) or len(query)>150:
         raise ValueError("Invalid graph query")
     limit=min(max(int(limit),1),300)
-    rows=cypher("MATCH (m:YorimiyuMemory {agent:$agent}) OPTIONAL MATCH (m)-[:MENTIONS]->(e:YorimiyuEntity) WHERE $q='' OR toLower(m.text) CONTAINS toLower($q) OR toLower(e.name) CONTAINS toLower($q) RETURN m.id,m.text,collect(DISTINCT e.name) LIMIT $limit",
-                {"agent":agent_id,"q":query,"limit":limit})
-    nodes=[];edges=[];seen=set()
-    for row in rows:
-        values=row.get("row",[])
-        if len(values)<3: continue
-        mid="m"+str(values[0]);nodes.append({"id":mid,"label":str(values[1])[:80],"kind":"memory"})
-        for name in values[2] or []:
-            if not name:continue
-            eid="e:"+name
-            if eid not in seen:
-                nodes.append({"id":eid,"label":name,"kind":"entity"});seen.add(eid)
-            edges.append({"source":mid,"target":eid,"weight":1})
-    return {"nodes":nodes,"edges":edges,"kind":"neo4j_local","graphiti_indexed":False}
+    with _graph_db() as db:
+        rows=db.execute("""SELECT id,content FROM graph_memories WHERE agent=?
+            AND (?='' OR instr(lower(content),lower(?))>0 OR EXISTS(
+                SELECT 1 FROM graph_mentions WHERE agent=graph_memories.agent
+                AND memory_id=graph_memories.id AND instr(lower(entity_name),lower(?))>0))
+            ORDER BY id DESC LIMIT ?""",(agent_id,query,query,query,limit)).fetchall()
+        nodes=[];edges=[];seen=set()
+        for memory_id,content in rows:
+            mid="m"+str(memory_id)
+            nodes.append({"id":mid,"label":content[:80],"kind":"memory"})
+            mentions=db.execute("SELECT entity_name FROM graph_mentions WHERE agent=? AND memory_id=? ORDER BY entity_name",(agent_id,memory_id)).fetchall()
+            for (name,) in mentions:
+                eid="e:"+name
+                if eid not in seen:
+                    nodes.append({"id":eid,"label":name,"kind":"entity"});seen.add(eid)
+                edges.append({"source":mid,"target":eid,"weight":1})
+    return {"nodes":nodes,"edges":edges,"kind":"sqlite_local","graphiti_indexed":False}
 
 def backup(db):
     db.commit()  # Avoid an open write transaction blocking SQLite online backup.

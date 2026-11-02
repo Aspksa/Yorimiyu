@@ -15,12 +15,15 @@ class GraphitiAdapterTests(unittest.TestCase):
 
     def test_outbox_idempotence(self):
         with tempfile.TemporaryDirectory() as folder:
-            with connect(Path(folder)/"test.sqlite") as db:
+            db = connect(Path(folder)/"test.sqlite")
+            try:
                 agent = create_agent(db, "Тест")
                 add_memory(db, agent["id"], "Проверка")
                 self.assertEqual(len(list_pending(db)), 1)
                 db.execute("INSERT OR IGNORE INTO graphiti_outbox(memory_id,agent_id,content,state) VALUES(1,?,?,'pending')", (agent["id"],"Проверка"))
                 self.assertEqual(len(list_pending(db)), 1)
+            finally:
+                db.close()
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ from urllib.parse import urlsplit, parse_qs
 from memory_bridge import connect, list_agents, create_agent, add_memory, list_memories, status
 from graphiti_adapter import health as graphiti_health, list_pending
 from graphiti_delivery import deliver_one
+from ai_workspace import initialize, messages, search, graph, runtime, send_chat, propose, suggestions, review, bind_letta, letta_message
 import logging
 from logging.handlers import RotatingFileHandler
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -60,7 +61,20 @@ class Handler(SimpleHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError("Ожидается объект JSON")
             with connect() as db:
-                if self.path == "/api/graphiti/deliver":
+                initialize(db)
+                if self.path == "/api/chat":
+                    result = send_chat(db, data.get("agent_id"), data.get("content"))
+                elif self.path == "/api/letta/bind":
+                    result = bind_letta(db, data.get("agent_id"), data.get("letta_agent_id"))
+                elif self.path == "/api/letta/chat":
+                    if data.get("confirm") is not True:
+                        raise ValueError("Подтвердите выполнение Letta")
+                    result = letta_message(db, data.get("agent_id"), data.get("content"))
+                elif self.path == "/api/learning/propose":
+                    result = propose(db, data.get("agent_id"))
+                elif self.path == "/api/learning/review":
+                    result = review(db, data.get("agent_id"), data.get("id"), data.get("approve") is True)
+                elif self.path == "/api/graphiti/deliver":
                     if data.get("confirm") is not True:
                         raise ValueError("Для передачи данных требуется явное подтверждение")
                     result = {"delivery": deliver_one(db)}
@@ -95,7 +109,19 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             try:
                 with connect() as db:
-                    if path.path == "/api/graphiti/status":
+                    initialize(db)
+                    agent_id = parse_qs(path.query).get("agent_id", [""])[0]
+                    if path.path == "/api/chat":
+                        result = {"messages": messages(db, agent_id)}
+                    elif path.path == "/api/search":
+                        result = {"matches": search(db, agent_id, parse_qs(path.query).get("q", [""])[0])}
+                    elif path.path == "/api/graph":
+                        result = graph(db, agent_id)
+                    elif path.path == "/api/runtime":
+                        result = runtime()
+                    elif path.path == "/api/learning":
+                        result = {"suggestions": suggestions(db, agent_id)}
+                    elif path.path == "/api/graphiti/status":
                         result = graphiti_health()
                         result["queued"] = db.execute("SELECT count(*) FROM graphiti_outbox WHERE state='pending'").fetchone()[0]
                     elif path.path == "/api/graphiti/outbox":

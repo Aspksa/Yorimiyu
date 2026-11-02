@@ -1,0 +1,25 @@
+name: Yorimiyu unified AI checks
+on:
+  pull_request:
+    paths:
+      - 'ai_workspace.py'
+      - 'launcher.py'
+      - 'memory_bridge.py'
+      - 'graphiti_*.py'
+      - 'tests/**'
+      - '.github/workflows/unified-ai-ci.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Python
+        run: python -m compileall -q ai_workspace.py launcher.py memory_bridge.py graphiti_adapter.py graphiti_delivery.py
+      - name: Run local tests
+        run: python -m unittest discover -s tests -v

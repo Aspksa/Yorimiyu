@@ -257,3 +257,11 @@ button,a,summary,select,input,textarea{outline-offset:3px}
 .automation-switches label{display:flex;gap:10px;align-items:center;min-height:34px;font-size:13px;font-weight:600}
 .automation-switches input{width:17px;height:17px;accent-color:var(--accent)}
 @media(max-width:760px){.quick-open span,.quick-open kbd{display:none}.quick-open{min-width:42px;justify-content:center}.automation-overview{padding:18px}.quick-modal{padding:18px}}
+
+/* v0.8 · Cloud.ru diagnostics */
+.cloud-field{display:grid;gap:7px;font-weight:650;font-size:13px}
+.cloud-field select{width:100%;min-height:46px;border:1px solid var(--border);border-radius:11px;padding:9px 12px;background:var(--base);color:var(--text)}
+.cloud-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.cloud-actions button{min-height:44px;flex:1 1 180px}
+#cloud-diagnostics{border-left:3px solid var(--gold,#b48746);padding:12px 15px;border-radius:0 10px 10px 0;background:var(--accent-soft);font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+#cloud-state{font-size:13px}

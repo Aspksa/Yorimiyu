@@ -9,7 +9,7 @@ import local_services as s
 class LocalServicesTests(unittest.TestCase):
     def test_entity_extraction(self):
         self.assertIn("Новая Москва",s.extract_entities("Мы обсуждали Новая Москва и Новая Москва"))
-        self.assertEqual(len(s.extract_entities("Новая Москва Новая Москва")),1)
+        self.assertEqual(len(s.extract_entities("Новая Москва; Новая Москва")),1)
     def test_cloud_secret_not_exposed(self):
         with tempfile.TemporaryDirectory() as d, patch.object(s,"DATA",Path(d)),patch.object(s,"CONFIG",Path(d)/"settings.json"):
             s.save_cloud({"endpoint":"https://example.org/v1","model":"model-1","api_key":"very-secret"})

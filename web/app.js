@@ -31,6 +31,7 @@ async function refresh() {
     $('selected-agent').textContent = agents.agents.find(a=>a.id===currentAgent)?.name || 'Выберите агента';
     const memories = currentAgent ? await api('/api/memories?agent_id='+encodeURIComponent(currentAgent)) : {memories:[]};
     $('memory-list').replaceChildren(...memories.memories.map(m=>node('li',m.content)));
+    filterMemories();
     await refreshWorkspace();
   } catch (error) { $('connection-status').textContent = 'API недоступен: '+error.message; }
 }
@@ -70,11 +71,13 @@ async function refreshWorkspace() {
     api((useNeo4j ? '/api/neo4j/graph?agent_id=' : '/api/graph?agent_id=')+encodeURIComponent(currentAgent)+(useNeo4j?'&q='+encodeURIComponent(graphQuery):'')),
     api('/api/learning?agent_id='+encodeURIComponent(currentAgent))
   ]);
-  $('chat-history').replaceChildren(...chat.messages.map(m=>{
+  const messages=chat.messages;
+  $('chat-history').replaceChildren(...messages.map(m=>{
     const p=node('div',m.content); p.className='chat-message '+m.role; p.setAttribute('data-role',m.role); return p;
   }));
   $('graph-canvas').replaceChildren();
   const nodes=graphData.nodes.slice(0,150), edges=graphData.edges;
+  window.yorimiyuGraphData={nodes,edges};
   const map=new Map(nodes.map((n,i)=>[n.id,i]));
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
   svg.setAttribute('viewBox','0 0 800 420'); svg.setAttribute('role','img'); svg.setAttribute('aria-label','Граф локальной памяти');
@@ -91,13 +94,15 @@ async function refreshWorkspace() {
     const circle=document.createElementNS(svg.namespaceURI,'circle');
     for (const [k,v] of Object.entries({cx:pos[i].x,cy:pos[i].y,r:7,fill:'#e3c080'})) circle.setAttribute(k,v);
     circle.setAttribute('tabindex','0');circle.setAttribute('role','button');circle.setAttribute('aria-label',n.label||'Узел графа');
-    const select=()=>{$('graph-selected').textContent=n.label||n.id;layer.querySelectorAll('circle').forEach(el=>el.classList.remove('is-selected'));circle.classList.add('is-selected');};
+    circle.dataset.nodeId=String(n.id);
+    const select=()=>{$('graph-selected').textContent=n.label||n.id;$('graph-node-id').textContent=String(n.id);$('graph-node-degree').textContent=String(edges.filter(e=>e.source===n.id||e.target===n.id).length);$('graph-focus-node').disabled=false;$('graph-focus-node').onclick=()=>{graphView={scale:1.5,x:400-pos[i].x,y:210-pos[i].y};const layer=svg.querySelector('#graph-layer');layer.setAttribute('transform',`translate(${graphView.x} ${graphView.y}) translate(400 210) scale(${graphView.scale}) translate(-400 -210)`);};layer.querySelectorAll('circle').forEach(el=>el.classList.remove('is-selected'));circle.classList.add('is-selected');};
     circle.addEventListener('click',select);circle.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}});
     const title=document.createElementNS(svg.namespaceURI,'title');title.textContent=n.label;circle.append(title);layer.append(circle);
     const label=document.createElementNS(svg.namespaceURI,'text');label.textContent=String(n.label||'').slice(0,25);label.setAttribute('x',pos[i].x+12);label.setAttribute('y',pos[i].y+4);label.setAttribute('class','graph-node-label');layer.append(label);
   });
   $('graph-canvas').append(svg);
   initGraphInteractions(svg);
+  filterGraphNodes();
   $('graph-summary').textContent=nodes.length+' узлов · '+edges.length+' связей · '+graphData.kind;
   $('learning-list').replaceChildren(...learning.suggestions.map(s=>{
     const box=document.createElement('div');box.className='suggestion';
@@ -271,3 +276,69 @@ function initGraphInteractions(svg){
  svg.addEventListener('pointercancel',()=>{dragging=false;previous=null;});
  update();
 }
+
+/* Yorimiyu 0.4: independent settings categories and safe client-side exploration. */
+function filterMemories(){
+ const query=($('memory-filter')?.value||'').trim().toLocaleLowerCase('ru');
+ const rows=[...$('memory-list').querySelectorAll('li')];
+ let shown=0;
+ rows.forEach(row=>{row.hidden=!!query&&!row.textContent.toLocaleLowerCase('ru').includes(query);if(!row.hidden)shown++;});
+ if($('memory-visible-count'))$('memory-visible-count').textContent=shown+' из '+rows.length;
+}
+$('memory-filter').addEventListener('input',filterMemories);
+
+const settingsInfo={
+ ai:['Cloud.ru и модели ИИ','Адрес модели, её ID и API-ключ настраиваются в разделе «Подключения». Ключ хранится локально в файле настроек сервера, не в браузере.'],
+ memory:['Память и данные','Записи хранятся локально. Используйте раздел «Память» для просмотра, фильтрации и добавления знаний.'],
+ graph:['Граф и Neo4j','Индексирование в Neo4j запускается вручную в «Подключениях». Граф показывает реальные ответы локального API.'],
+ backup:['Резервные копии','Создание и восстановление резервных копий SQLite доступны в «Подключениях». Перед восстановлением требуется подтверждение.'],
+ safety:['Безопасность','Не публикуйте файл data/cloudru-settings.json, каталог .runtime или резервные копии. Действия Letta требуют подтверждения.']
+};
+function selectSettingsTab(tab){
+ const appearance=tab==='appearance';
+ $('appearance-section').hidden=!appearance;
+ const content=$('settings-category-content');
+ content.replaceChildren();
+ if(!appearance){
+   const [heading,description]=settingsInfo[tab]||settingsInfo.safety;
+   const h=node('h3',heading),p=node('p',description);
+   content.append(h,p);
+   const link=node('a',tab==='memory'?'Перейти в память →':'Открыть подключения →');
+   link.href=tab==='memory'?'#memory':'#services';link.className='primary';content.append(link);
+ }
+ document.querySelectorAll('[data-settings-tab]').forEach(button=>{const selected=button.dataset.settingsTab===tab;button.setAttribute('aria-selected',String(selected));button.classList.toggle('selected',selected);});
+ try{sessionStorage.setItem('yorimiyu-settings-tab',tab)}catch(_){}
+}
+document.querySelectorAll('[data-settings-tab]').forEach(button=>button.addEventListener('click',()=>selectSettingsTab(button.dataset.settingsTab)));
+let savedTab='appearance';try{savedTab=sessionStorage.getItem('yorimiyu-settings-tab')||savedTab}catch(_){}
+selectSettingsTab(savedTab in settingsInfo||savedTab==='appearance'?savedTab:'appearance');
+
+function filterGraphNodes(){
+ const svg=$('graph-canvas').querySelector('svg');
+ if(!svg)return;
+ const query=($('graph-local-search').value||'').trim().toLocaleLowerCase('ru');
+ const filter=$('graph-cluster-filter').value;
+ const data=window.yorimiyuGraphData||{nodes:[],edges:[]};
+ const degrees=new Map(data.nodes.map(n=>[String(n.id),0]));
+ for(const edge of data.edges){for(const id of [edge.source,edge.target])degrees.set(String(id),(degrees.get(String(id))||0)+1);}
+ const circles=[...svg.querySelectorAll('circle')];
+ circles.forEach((circle,i)=>{
+   const item=data.nodes[i];if(!item)return;
+   const degree=degrees.get(String(item.id))||0;
+   const visible=(!query||String(item.label||'').toLocaleLowerCase('ru').includes(query))&&(filter==='all'||(filter==='connected'?degree>0:degree===0));
+   circle.style.opacity=visible?'1':'.12';
+   const label=svg.querySelectorAll('.graph-node-label')[i];if(label)label.style.opacity=visible?'1':'.12';
+ });
+}
+$('graph-local-search').addEventListener('input',filterGraphNodes);
+$('graph-cluster-filter').addEventListener('change',filterGraphNodes);
+$('chat-new').addEventListener('click',()=>{
+ if(!confirm('Создать новый диалог? История чата агента останется в локальной памяти; разделение диалогов сервером пока не поддерживается.'))return;
+ $('chat-input').focus();
+ $('chat-state').textContent='Готово к новому сообщению. История агента не удалена.';
+});
+$('chat-export').addEventListener('click',()=>{
+ const lines=[...$('chat-history').querySelectorAll('.chat-message')].map(el=>(el.dataset.role||'message')+': '+el.textContent);
+ const blob=new Blob([lines.join('\n\n')],{type:'text/plain;charset=utf-8'});
+ const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='yorimiyu-chat.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+});

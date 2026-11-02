@@ -28,7 +28,7 @@ def initialize(db):
 
 def bind_letta(db,agent_id,letta_id):
     valid_agent(db,agent_id)
-    if not isinstance(letta_id,str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}",letta_id):
+    if not isinstance(letta_id,str) or not re.fullmatch(r"[a-zA-Z0-9_][a-zA-Z0-9_-]{0,127}",letta_id):
         raise ValueError("Некорректный ID агента Letta")
     db.execute("INSERT OR REPLACE INTO letta_bindings VALUES (?,?)",(agent_id,letta_id))
     db.commit()

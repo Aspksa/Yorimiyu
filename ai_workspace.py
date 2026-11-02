@@ -22,7 +22,34 @@ def initialize(db):
       state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','approved','rejected')),
       UNIQUE(agent_id,source_message_id));
     """)
+    db.execute("""CREATE TABLE IF NOT EXISTS letta_bindings (
+        agent_id TEXT PRIMARY KEY, letta_agent_id TEXT NOT NULL)""")
     db.commit()
+
+def bind_letta(db,agent_id,letta_id):
+    valid_agent(db,agent_id)
+    if not isinstance(letta_id,str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}",letta_id):
+        raise ValueError("Некорректный ID агента Letta")
+    db.execute("INSERT OR REPLACE INTO letta_bindings VALUES (?,?)",(agent_id,letta_id))
+    db.commit()
+    return {"bound":True}
+
+def letta_message(db,agent_id,prompt):
+    valid_agent(db,agent_id)
+    row=db.execute("SELECT letta_agent_id FROM letta_bindings WHERE agent_id=?",(agent_id,)).fetchone()
+    command=os.environ.get("YORIMIYU_LETTA_COMMAND","").strip()
+    if not row or not command or not shutil.which(command):
+        raise ValueError("Укажите исполняемый Letta и привяжите ID агента")
+    if not isinstance(prompt,str) or not 1<=len(prompt.strip())<=4000:
+        raise ValueError("Сообщение должно содержать 1–4000 символов")
+    if os.environ.get("YORIMIYU_ENABLE_LETTA_EXEC")!="1":
+        raise ValueError("Запуск Letta отключён: YORIMIYU_ENABLE_LETTA_EXEC=1")
+    # Letta may execute tools: only allow explicitly opted-in users.
+    proc=subprocess.run([command,"-p","--agent",row["letta_agent_id"],prompt],
+        capture_output=True,text=True,timeout=120,check=False,stdin=subprocess.DEVNULL)
+    if proc.returncode!=0:
+        raise RuntimeError("Letta завершился с ошибкой; подробности смотрите в его собственном журнале")
+    return {"answer":proc.stdout[-16000:]}
 
 def valid_agent(db, agent_id):
     if not isinstance(agent_id,str) or not db.execute("SELECT 1 FROM agents WHERE id=?",(agent_id,)).fetchone():

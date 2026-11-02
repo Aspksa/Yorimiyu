@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 import json
+from local_services import cloud_connection, graph_status
 
 def initialize(db):
     db.executescript("""
@@ -92,11 +93,11 @@ def graph(db,agent_id):
 def runtime():
     command=os.environ.get("YORIMIYU_LETTA_COMMAND","").strip()
     return {"letta":{"state":"configured" if command and shutil.which(command) else ("missing_executable" if command else "not_configured")},
-            "llm":{"state":"configured" if os.environ.get("YORIMIYU_LLM_URL") and os.environ.get("YORIMIYU_LLM_MODEL") else "not_configured"}}
+            "llm":{"state":"configured" if all(cloud_connection()[:2]) else "not_configured"}, "neo4j":graph_status()}
 
 def llm_reply(db,agent_id,prompt):
-    base=os.environ.get("YORIMIYU_LLM_URL","").rstrip("/")
-    model=os.environ.get("YORIMIYU_LLM_MODEL","")
+    base,model,cloud_key=cloud_connection()
+    base=base.rstrip("/")
     parsed=urlsplit(base)
     if not model or not base or parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("","/v1"):
         raise ValueError("Настройте HTTPS YORIMIYU_LLM_URL (корень или /v1) и YORIMIYU_LLM_MODEL")
@@ -105,7 +106,7 @@ def llm_reply(db,agent_id,prompt):
     system="Ты помощник Yorimiyu. Не придумывай воспоминания. Используй только достоверные данные. Контекст памяти: "+json.dumps(context,ensure_ascii=False)[:5000]
     body={"model":model,"messages":[{"role":"system","content":system}]+[{"role":x["role"],"content":x["content"]} for x in history[-18:]],"stream":False}
     headers={"Content-Type":"application/json"}
-    key=os.environ.get("YORIMIYU_LLM_API_KEY","")
+    key=cloud_key
     if key: headers["Authorization"]="Bearer "+key
     req=Request(base+("/chat/completions" if parsed.path=="/v1" else "/v1/chat/completions"),data=json.dumps(body).encode(),headers=headers,method="POST")
     with urlopen(req,timeout=60) as response:

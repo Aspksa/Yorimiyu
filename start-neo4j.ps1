@@ -12,8 +12,10 @@ function Log([string]$message) {
 }
 function DockerReady {
     if (-not (Get-Command docker.exe -ErrorAction SilentlyContinue)) { return $false }
-    & docker.exe info --format '{{.ServerVersion}}' 2>$null | Out-Null
-    return ($LASTEXITCODE -eq 0)
+    try {
+        & docker.exe info --format '{{.ServerVersion}}' 2>$null | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    } catch { return $false }
 }
 try {
     if (-not (Get-Command docker.exe -ErrorAction SilentlyContinue)) {

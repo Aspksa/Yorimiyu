@@ -15,6 +15,7 @@ import threading
 import time
 import os
 import webbrowser
+from local_services import settings_public, save_cloud, graph_status, graph_view, index_memory, backup, list_backups, restore_backup
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parent
@@ -85,6 +86,30 @@ class Handler(SimpleHTTPRequestHandler):
                     result = {"agent": create_agent(db, data.get("name"))}
                 elif self.path == "/api/memories":
                     result = {"memory": add_memory(db, data.get("agent_id"), data.get("content"))}
+                    try:
+                        result["graph_index"] = index_memory(data.get("agent_id"), result["memory"]["id"], data.get("content"))
+                    except Exception:
+                        logging.warning("Neo4j unavailable; memory preserved in SQLite")
+                        result["graph_index"] = {"state":"pending"}
+                elif self.path == "/api/cloud/settings":
+                    result = save_cloud(data)
+                elif self.path == "/api/neo4j/index":
+                    agent = data.get("agent_id")
+                    if not isinstance(agent,str) or not db.execute("SELECT 1 FROM agents WHERE id=?",(agent,)).fetchone():
+                        raise ValueError("Agent not found")
+                    rows = db.execute("SELECT id,content FROM memories WHERE agent_id=? ORDER BY id LIMIT 500",(agent,)).fetchall()
+                    indexed = 0
+                    for row in rows:
+                        index_memory(agent,row["id"],row["content"])
+                        indexed += 1
+                    result = {"indexed":indexed}
+                elif self.path == "/api/backup":
+                    result = backup(db)
+                elif self.path == "/api/backup/restore":
+                    if data.get("confirm") is not True:
+                        raise ValueError("Explicit restore confirmation required")
+                    backup(db)
+                    result = restore_backup(db,data.get("name"))
                 else:
                     self._json(404, {"error": "Не найдено"})
                     return
@@ -120,6 +145,16 @@ class Handler(SimpleHTTPRequestHandler):
                         result = {"matches": search(db, agent_id, parse_qs(path.query).get("q", [""])[0])}
                     elif path.path == "/api/graph":
                         result = graph(db, agent_id)
+                    elif path.path == "/api/neo4j/graph":
+                        if not db.execute("SELECT 1 FROM agents WHERE id=?",(agent_id,)).fetchone():
+                            raise ValueError("Agent not found")
+                        result = graph_view(agent_id,parse_qs(path.query).get("q",[""])[0])
+                    elif path.path == "/api/neo4j/status":
+                        result = graph_status()
+                    elif path.path == "/api/cloud/settings":
+                        result = settings_public()
+                    elif path.path == "/api/backups":
+                        result = {"backups":list_backups()}
                     elif path.path == "/api/runtime":
                         result = runtime()
                     elif path.path == "/api/learning":

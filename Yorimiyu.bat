@@ -22,7 +22,7 @@ set "PY_ARGS="
 
 rem Always prefer the project-owned interpreter. Windows Python aliases can be broken.
 if exist ".runtime\python\python.exe" (
-  ".runtime\python\python.exe" -c "import sys,sqlite3,ssl,os;sys.exit(0 if sys.version_info >= (3,10) and os.path.isfile(sys.executable) else 1)" >nul 2>&1
+  ".runtime\python\python.exe" -c "import sys,sqlite3,ssl,os,memory_bridge;sys.exit(0 if sys.version_info >= (3,10) and os.path.isfile(sys.executable) else 1)" >nul 2>&1
   if not errorlevel 1 (
     set "PY_EXE=.runtime\python\python.exe"
     goto start

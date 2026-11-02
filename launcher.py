@@ -12,6 +12,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import secrets
 import threading
+import time
+import os
 import webbrowser
 from urllib.request import urlopen
 
@@ -19,6 +21,7 @@ ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
 STATE = ROOT / ".runtime" / "dashboard.json"
 LOG = ROOT / "logs" / "launch.log"
+LOCK = ROOT / ".runtime" / "dashboard.lock"
 TOKEN = secrets.token_urlsafe(24)
 
 def setup_logging():
@@ -161,6 +164,45 @@ def existing_url():
         pass
     return None
 
+def acquire_instance_lock(timeout=20):
+    """Hold an OS file lock for the entire server lifetime; crash releases it."""
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(LOCK, "a+b")
+    handle.seek(0, os.SEEK_END)
+    if handle.tell() == 0:
+        handle.write(b"0")
+        handle.flush()
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return handle
+        except (OSError, BlockingIOError):
+            if time.monotonic() >= deadline:
+                handle.close()
+                return None
+            time.sleep(0.2)
+
+def release_instance_lock(handle):
+    if handle is None:
+        return
+    try:
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-browser", action="store_true")
@@ -168,6 +210,21 @@ def main():
     setup_logging()
     if not (WEB / "index.html").is_file():
         raise SystemExit("Missing web/index.html")
+    lock = acquire_instance_lock()
+    if lock is None:
+        url = existing_url()
+        if url:
+            print(f"[Yorimiyu] Already running: {url}", flush=True)
+            if not args.no_browser:
+                webbrowser.open(url)
+            return
+        raise SystemExit("Another startup is in progress. Try again in 20 seconds.")
+    try:
+        run_dashboard(args)
+    finally:
+        release_instance_lock(lock)
+
+def run_dashboard(args):
     url = existing_url()
     if url:
         logging.info("Reusing dashboard at %s", url)

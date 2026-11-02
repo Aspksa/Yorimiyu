@@ -171,8 +171,9 @@ def main():
     url = existing_url()
     if url:
         logging.info("Reusing dashboard at %s", url)
-        if not args.no_browser:
-            webbrowser.open(url)
+        print(f"[Yorimiyu] Already running: {url}", flush=True)
+        if not args.no_browser and not webbrowser.open(url):
+            logging.warning("Browser did not open automatically; open %s manually", url)
         return
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
@@ -180,9 +181,16 @@ def main():
     STATE.parent.mkdir(parents=True, exist_ok=True)
     STATE.write_text(json.dumps({"port": server.server_port, "instanceId": TOKEN}), encoding="utf-8")
     logging.info("Yorimiyu dashboard: %s", url)
+    print(f"[Yorimiyu] Open in browser: {url}", flush=True)
     logging.info("Local SQLite memory API enabled; Graphiti and Letta runtimes are not running.")
     if not args.no_browser:
-        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+        def open_dashboard():
+            try:
+                if not webbrowser.open(url):
+                    logging.warning("Browser did not open automatically; open %s manually", url)
+            except Exception:
+                logging.exception("Failed to open browser; dashboard remains available at %s", url)
+        threading.Timer(0.5, open_dashboard).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

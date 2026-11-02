@@ -22,7 +22,7 @@ set "PY_ARGS="
 
 rem Always prefer the project-owned interpreter. Windows Python aliases can be broken.
 if exist ".runtime\python\python.exe" (
-  ".runtime\python\python.exe" -c "import sys,sqlite3,ssl,os,memory_bridge;sys.exit(0 if sys.version_info >= (3,10) and os.path.isfile(sys.executable) else 1)" >nul 2>&1
+  ".runtime\python\python.exe" -c "import sys,sqlite3,ssl,os;sys.path.insert(0,os.getcwd());import memory_bridge;sys.exit(0 if sys.version_info >= (3,10) and os.path.isfile(sys.executable) else 1)" >nul 2>&1
   if not errorlevel 1 (
     set "PY_EXE=.runtime\python\python.exe"
     goto start
@@ -33,7 +33,7 @@ goto install_python
 :start
 echo [Yorimiyu] Python: %PY_EXE% %PY_ARGS%
 echo [Yorimiyu] Starting local dashboard...
-"%PY_EXE%" %PY_ARGS% -u "launcher.py" %*
+"%PY_EXE%" %PY_ARGS% -u -c "import os,sys,runpy;sys.path.insert(0,os.getcwd());sys.argv=['launcher.py']+sys.argv[1:];runpy.run_path('launcher.py',run_name='__main__')" %*
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" goto failed
 echo.

@@ -20,6 +20,11 @@ try {
     Log 'Checking portable Python'
     $exe = Join-Path $target 'python.exe'
     if (Test-Path -LiteralPath $exe) {
+        $existingPth = Get-ChildItem -LiteralPath $target -Filter 'python*._pth' | Select-Object -First 1
+        if ($existingPth) {
+            $lines = @(Get-Content -LiteralPath $existingPth.FullName)
+            if ($lines -notcontains '.') { Add-Content -LiteralPath $existingPth.FullName -Value '.' -Encoding ASCII }
+        }
         & $exe -c 'import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>$null
         if ($LASTEXITCODE -eq 0) { Log 'Portable Python is ready'; exit 0 }
     }
@@ -32,6 +37,10 @@ try {
     Expand-Archive -LiteralPath $archive -DestinationPath $staging -Force
     $candidate = Join-Path $staging 'python.exe'
     if (-not (Test-Path -LiteralPath $candidate)) { throw 'Downloaded archive has no python.exe' }
+    # Embedded Python isolates sys.path; include project directory for local imports.
+    $pth = Get-ChildItem -LiteralPath $staging -Filter 'python*._pth' | Select-Object -First 1
+    if (-not $pth) { throw 'Embedded Python path configuration not found' }
+    Add-Content -LiteralPath $pth.FullName -Value '.' -Encoding ASCII
     & $candidate -c 'import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)'
     if ($LASTEXITCODE -ne 0) { throw 'Downloaded Python failed sqlite3/ssl validation' }
     if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }

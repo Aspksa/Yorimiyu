@@ -19,33 +19,12 @@ if not exist "install-python.ps1" goto missing
 if not exist "logs" mkdir "logs" 2>nul
 set "PY_EXE="
 set "PY_ARGS="
-set "PY_FOUND=0"
 
-rem Check the portable interpreter, then the Windows launcher, then PATH.
+rem Always prefer the project-owned interpreter. Windows Python aliases can be broken.
 if exist ".runtime\python\python.exe" (
-  set "PY_FOUND=1"
-  ".runtime\python\python.exe" -c "import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
+  ".runtime\python\python.exe" -c "import sys,sqlite3,ssl,os;sys.path.insert(0,os.getcwd());import memory_bridge;sys.exit(0 if sys.version_info >= (3,10) and os.path.isfile(sys.executable) else 1)" >nul 2>&1
   if not errorlevel 1 (
     set "PY_EXE=.runtime\python\python.exe"
-    goto start
-  )
-)
-where py.exe >nul 2>&1
-if not errorlevel 1 (
-  set "PY_FOUND=1"
-  py.exe -3 -c "import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
-  if not errorlevel 1 (
-    set "PY_EXE=py.exe"
-    set "PY_ARGS=-3"
-    goto start
-  )
-)
-where python.exe >nul 2>&1
-if not errorlevel 1 (
-  set "PY_FOUND=1"
-  python.exe -c "import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
-  if not errorlevel 1 (
-    set "PY_EXE=python.exe"
     goto start
   )
 )
@@ -54,7 +33,7 @@ goto install_python
 :start
 echo [Yorimiyu] Python: %PY_EXE% %PY_ARGS%
 echo [Yorimiyu] Starting local dashboard...
-"%PY_EXE%" %PY_ARGS% -u "launcher.py" %*
+"%PY_EXE%" %PY_ARGS% -u -c "import os,sys,runpy;sys.path.insert(0,os.getcwd());sys.argv=['launcher.py']+sys.argv[1:];runpy.run_path('launcher.py',run_name='__main__')" %*
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" goto failed
 echo.
@@ -65,15 +44,15 @@ pause
 goto done
 
 :install_python
-echo [Yorimiyu] No compatible Python found. Installing a portable copy locally...
+echo [Yorimiyu] Preparing a project-owned Python runtime (ignoring broken system aliases)...
 where powershell.exe >nul 2>&1
 if errorlevel 1 goto no_powershell
 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "install-python.ps1"
 if errorlevel 1 goto python_install_failed
-if not exist ".runtime\\python\\python.exe" goto python_install_failed
-".runtime\\python\\python.exe" -c "import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
+if not exist ".runtime\python\\python.exe" goto python_install_failed
+".runtime\python\\python.exe" -c "import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
 if errorlevel 1 goto python_install_failed
-set "PY_EXE=.runtime\\python\\python.exe"
+set "PY_EXE=.runtime\python\\python.exe"
 set "PY_ARGS="
 goto start
 
@@ -83,7 +62,7 @@ set "RC=2"
 goto failed
 
 :python_install_failed
-echo [ERROR] Automatic Python setup failed. Check .runtime\\python-install.log
+echo [ERROR] Automatic Python setup failed. Check .runtime\python-install.log
 echo [INFO] Internet access to www.python.org is required for first setup.
 set "RC=2"
 goto failed

@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
 CONFIG = DATA / "cloudru-settings.json"
 BACKUPS = DATA / "backups"
+CLOUD_BASE_URL = "https://foundation-models.api.cloud.ru/v1"
 
 def _config():
     if not CONFIG.exists():
@@ -23,14 +24,14 @@ def _config():
 
 def settings_public():
     cfg = _config()
-    return {"endpoint": cfg.get("endpoint",""), "model":cfg.get("model",""),
+    return {"endpoint": CLOUD_BASE_URL, "model":cfg.get("model",""),
             "has_key": bool(cfg.get("api_key")), "key": "stored_locally_only"}
 
 def save_cloud(data):
     if not isinstance(data,dict):
         raise ValueError("Invalid settings")
     old = _config()
-    endpoint = data.get("endpoint",old.get("endpoint",""))
+    endpoint = CLOUD_BASE_URL
     model = data.get("model",old.get("model",""))
     key = data.get("api_key",None)
     if not isinstance(endpoint,str) or not isinstance(model,str) or len(endpoint)>300 or len(model)>150:
@@ -55,7 +56,7 @@ def save_cloud(data):
 
 def cloud_connection():
     cfg=_config()
-    return cfg.get("endpoint") or os.environ.get("YORIMIYU_LLM_URL",""), cfg.get("model") or os.environ.get("YORIMIYU_LLM_MODEL",""), cfg.get("api_key") or os.environ.get("YORIMIYU_LLM_API_KEY","")
+    return os.environ.get("YORIMIYU_LLM_URL") or CLOUD_BASE_URL, cfg.get("model") or os.environ.get("YORIMIYU_LLM_MODEL",""), cfg.get("api_key") or os.environ.get("YORIMIYU_LLM_API_KEY","")
 
 
 def _cloud_models_url(endpoint):
@@ -67,7 +68,7 @@ def _cloud_models_url(endpoint):
 def cloud_models():
     endpoint,model,key=cloud_connection()
     if not endpoint:
-        raise ValueError("Сначала сохраните HTTPS endpoint Cloud.ru")
+        raise ValueError("Не настроен адрес Cloud.ru")
     if not key:
         raise ValueError("Сначала сохраните API-ключ Cloud.ru")
     request=Request(_cloud_models_url(endpoint),headers={"Authorization":"Bearer "+key,"Accept":"application/json"},method="GET")

@@ -129,3 +129,55 @@ button:disabled{opacity:.5;cursor:not-allowed;transform:none}
 .graph-facts dd{margin:0;font-size:13px;font-weight:600}
 #graph-focus-node{margin-top:20px}
 @media(max-width:700px){.chat-toolbar{align-items:stretch}.chat-toolbar label{width:100%}.graph-tools label{margin-left:0}.graph-tools input{width:100%}.memory-tools input{min-width:0;width:100%}.settings-subnav button{flex:1 1 130px}}
+
+/* Yorimiyu 0.5 · connection center, conversation studio and knowledge atlas */
+body{--studio-line:var(--border);--studio-surface:var(--panel,#fff)}
+main{max-width:none;width:calc(100% - 245px);margin:0;padding:34px clamp(24px,3.5vw,70px) 60px}
+.sidebar{flex:0 0 245px}
+header{margin-bottom:24px}
+[data-view="chat"],[data-view="graph"],[data-view="services"]{max-width:1600px;margin-inline:auto}
+.chat-context{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;border:1px solid var(--border);border-radius:14px;margin:20px 0;background:var(--base);font-size:13px}
+.chat-context a{margin-left:auto;color:var(--accent);font-weight:700}
+.live-dot{width:9px;height:9px;border-radius:50%;background:#58a77b;box-shadow:0 0 0 4px rgba(88,167,123,.12)}
+.chat-layout{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:22px;align-items:stretch}
+.chat-main{display:flex;flex-direction:column;min-width:0;min-height:610px;border:1px solid var(--border);border-radius:20px;background:var(--base);padding:18px}
+.chat-history-head{display:flex;justify-content:space-between;gap:12px;padding:0 8px 12px;font-size:13px}
+.chat-history{height:clamp(310px,48vh,650px);min-height:310px;overflow:auto;padding:18px 12px;scrollbar-width:thin}
+.chat-message{max-width:min(82%,740px);line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;padding:15px 18px;border-radius:18px;margin-bottom:15px;box-shadow:0 3px 14px rgba(25,24,22,.035)}
+.chat-message.user{margin-left:auto;border-bottom-right-radius:5px;background:var(--accent-soft);border:1px solid var(--border)}
+.chat-message.assistant{margin-right:auto;border-bottom-left-radius:5px;background:var(--card,#fff);border:1px solid var(--border)}
+.chat-main #chat-form{display:flex;gap:12px;align-items:flex-end;margin-top:auto;padding-top:14px;border-top:1px solid var(--border)}
+.chat-main #chat-input{flex:1;min-height:84px;resize:vertical;border-radius:14px}
+.chat-main #chat-form button{min-height:50px}
+.chat-side{border:1px solid var(--border);border-radius:20px;padding:22px;background:var(--card,#fff);min-width:0}
+.chat-side h3{font-size:18px}
+.chat-side .inline-form{display:grid;grid-template-columns:1fr;gap:8px}
+.chat-side .inline-form input{min-width:0;width:100%}
+.chat-side .memory-list{max-height:330px;overflow:auto}
+.chat-memory-link{display:block;padding:12px;border-radius:10px;text-align:center;margin-top:18px;font-size:13px}
+.graph-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:20px 0}
+.graph-metrics>div{background:var(--base);border:1px solid var(--border);border-radius:16px;padding:17px 20px;min-width:0}
+.graph-metrics small{font-size:10px;font-weight:800;letter-spacing:.12em;color:var(--muted);display:block;margin-bottom:8px}
+.graph-metrics strong{font-size:clamp(15px,2vw,24px);overflow-wrap:anywhere}
+.graph-canvas{background-image:radial-gradient(circle at center,rgba(163,128,82,.13) 1px,transparent 1px),radial-gradient(ellipse at 50% 30%,rgba(182,80,87,.055),transparent 65%);background-size:23px 23px,100% 100%;border-radius:18px;min-height:540px}
+.graph-canvas svg{min-height:540px}
+.graph-canvas circle{cursor:pointer;transition:opacity .2s,filter .2s;stroke:var(--base);stroke-width:2}
+.graph-canvas circle:hover,.graph-canvas circle.is-selected{stroke:var(--accent);stroke-width:4;filter:drop-shadow(0 2px 6px rgba(174,65,77,.25))}
+.graph-inspector{border-radius:18px}
+.graph-tools{gap:8px}
+.connection-actions{display:flex;align-items:center;flex-wrap:wrap;gap:16px;background:var(--base);border:1px solid var(--border);padding:16px 18px;border-radius:16px;margin:22px 0}
+.connection-actions label{display:flex;align-items:center;gap:9px;font-size:13px}
+.connection-actions input{accent-color:var(--accent)}
+.connection-actions .muted{margin-left:auto;font-size:12px}
+.connection-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 22px}
+.connection-cards .service{border:1px solid var(--border);border-radius:15px;padding:18px;background:var(--base);display:flex;flex-direction:column;align-items:flex-start;gap:10px}
+.connection-cards .service strong{font-size:13px;overflow-wrap:anywhere}
+.connection-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.connection-details details{border:1px solid var(--border);border-radius:16px;padding:16px 20px;background:var(--base);min-width:0}
+.connection-details summary{cursor:pointer;font-weight:750;font-size:15px;padding:6px 0;list-style-position:inside}
+.connection-details details>form,.connection-details details>button,.connection-details details>.service{margin-top:14px}
+.connection-details input,.connection-details textarea{max-width:100%}
+.connection-details details[open] summary{padding-bottom:15px;border-bottom:1px solid var(--border);margin-bottom:16px}
+@media(max-width:1180px){.chat-layout{grid-template-columns:minmax(0,1fr) 240px}.connection-details{grid-template-columns:1fr}}
+@media(max-width:900px){main{width:100%;padding:24px 18px 50px}.sidebar{flex-basis:auto}.chat-layout{grid-template-columns:1fr}.chat-side{order:2}.connection-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.graph-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.connection-cards{grid-template-columns:1fr}.chat-main #chat-form{flex-direction:column;align-items:stretch}.chat-message{max-width:95%}.chat-context a{margin-left:0}.connection-actions .muted{margin-left:0}}

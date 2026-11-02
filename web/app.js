@@ -2,6 +2,7 @@ const $ = id => document.getElementById(id);
 let currentAgent = '';
 let useSQLiteGraph = true;
 let graphQuery = '';
+const graphIndexedThisSession=new Set();
 async function api(path, options) {
   const response = await fetch(path, {credentials:'same-origin', ...options});
   const result = await response.json();
@@ -15,6 +16,7 @@ async function refresh() {
     $('letta-state').textContent = runtimes.letta.state;
     $('sqliteGraph-state').textContent = runtimes.neo4j?.state || 'offline';
     $('llm-state').textContent = runtimes.llm.state;
+    $('chat-model-indicator').textContent='Модель: '+(runtimes.llm.state==='configured'?'подключена':'не настроена');
     $('graphiti-state').textContent = graphiti.state + ' · очередь: ' + graphiti.queued;
     $('connection-status').textContent = 'Локальная память работает';
     $('memory-count').textContent = String(status.memories);
@@ -29,9 +31,16 @@ async function refresh() {
     }
     if (!currentAgent && agents.agents.length) currentAgent = agents.agents[0].id;
     $('selected-agent').textContent = agents.agents.find(a=>a.id===currentAgent)?.name || 'Выберите агента';
+    $('chat-agent-indicator').textContent='Агент: '+$('selected-agent').textContent;
+    $('graph-metric-agent').textContent=$('selected-agent').textContent;
     const memories = currentAgent ? await api('/api/memories?agent_id='+encodeURIComponent(currentAgent)) : {memories:[]};
     $('memory-list').replaceChildren(...memories.memories.map(m=>node('li',m.content)));
     filterMemories();
+    if(currentAgent && memories.memories.length && !graphIndexedThisSession.has(currentAgent)){
+      graphIndexedThisSession.add(currentAgent);
+      try {await api('/api/sqlite-graph/index',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent_id:currentAgent})});}
+      catch(error){graphIndexedThisSession.delete(currentAgent);$('graph-action-state').textContent='Автоиндексация: '+error.message;}
+    }
     await refreshWorkspace();
   } catch (error) { $('connection-status').textContent = 'API недоступен: '+error.message; }
 }
@@ -72,9 +81,11 @@ async function refreshWorkspace() {
     api('/api/learning?agent_id='+encodeURIComponent(currentAgent))
   ]);
   const messages=chat.messages;
+  $('chat-message-count').textContent=messages.length+' сообщений';
   $('chat-history').replaceChildren(...messages.map(m=>{
     const p=node('div',m.content); p.className='chat-message '+m.role; p.setAttribute('data-role',m.role); return p;
   }));
+  $('chat-history').scrollTop=$('chat-history').scrollHeight;
   $('graph-canvas').replaceChildren();
   const nodes=graphData.nodes.slice(0,150), edges=graphData.edges;
   window.yorimiyuGraphData={nodes,edges};
@@ -92,7 +103,7 @@ async function refreshWorkspace() {
   }
   nodes.forEach((n,i)=>{
     const circle=document.createElementNS(svg.namespaceURI,'circle');
-    for (const [k,v] of Object.entries({cx:pos[i].x,cy:pos[i].y,r:7,fill:'#e3c080'})) circle.setAttribute(k,v);
+    for (const [k,v] of Object.entries({cx:pos[i].x,cy:pos[i].y,r:n.kind==='entity'?10:7,fill:n.kind==='entity'?'#b65057':'#c7a15b'})) circle.setAttribute(k,v);
     circle.setAttribute('tabindex','0');circle.setAttribute('role','button');circle.setAttribute('aria-label',n.label||'Узел графа');
     circle.dataset.nodeId=String(n.id);
     const select=()=>{$('graph-selected').textContent=n.label||n.id;$('graph-node-id').textContent=String(n.id);$('graph-node-degree').textContent=String(edges.filter(e=>e.source===n.id||e.target===n.id).length);$('graph-focus-node').disabled=false;$('graph-focus-node').onclick=()=>{graphView={scale:1.5,x:400-pos[i].x,y:210-pos[i].y};const layer=svg.querySelector('#graph-layer');layer.setAttribute('transform',`translate(${graphView.x} ${graphView.y}) translate(400 210) scale(${graphView.scale}) translate(-400 -210)`);};layer.querySelectorAll('circle').forEach(el=>el.classList.remove('is-selected'));circle.classList.add('is-selected');};
@@ -104,6 +115,9 @@ async function refreshWorkspace() {
   initGraphInteractions(svg);
   filterGraphNodes();
   $('graph-summary').textContent=nodes.length+' узлов · '+edges.length+' связей · '+graphData.kind;
+  $('graph-metric-nodes').textContent=String(nodes.length);
+  $('graph-metric-edges').textContent=String(edges.length);
+  $('graph-metric-source').textContent=graphData.kind==='sqlite_local'?'SQLite':'Лексический';
   $('learning-list').replaceChildren(...learning.suggestions.map(s=>{
     const box=document.createElement('div');box.className='suggestion';
     box.append(node('p',s.content),node('small',s.state));
@@ -265,7 +279,7 @@ function initGraphInteractions(svg){
  const zoom=(factor)=>{graphView.scale=Math.max(.35,Math.min(4,graphView.scale*factor));update();};
  $('graph-zoom-in').onclick=()=>zoom(1.25);$('graph-zoom-out').onclick=()=>zoom(.8);
  $('graph-reset').onclick=()=>{graphView={scale:1,x:0,y:0};update();};
- $('graph-fit').onclick=()=>{graphView={scale:1,x:0,y:0};update();};
+ $('graph-fit').onclick=()=>{const nodes=[...layer.querySelectorAll('circle')];if(!nodes.length){graphView={scale:1,x:0,y:0};update();return;}const xs=nodes.map(n=>Number(n.getAttribute('cx'))),ys=nodes.map(n=>Number(n.getAttribute('cy')));const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);graphView.scale=Math.min(3,700/Math.max(1,maxX-minX+48),340/Math.max(1,maxY-minY+48));graphView.x=graphView.scale*(400-(minX+maxX)/2);graphView.y=graphView.scale*(210-(minY+maxY)/2);update();};
  $('graph-labels').onchange=e=>svg.classList.toggle('hide-labels',!e.target.checked);
  svg.classList.toggle('hide-labels',!$('graph-labels').checked);
  svg.addEventListener('wheel',e=>{e.preventDefault();zoom(e.deltaY<0?1.1:.9);},{passive:false});
@@ -341,4 +355,38 @@ $('chat-export').addEventListener('click',()=>{
  const lines=[...$('chat-history').querySelectorAll('.chat-message')].map(el=>(el.dataset.role||'message')+': '+el.textContent);
  const blob=new Blob([lines.join('\n\n')],{type:'text/plain;charset=utf-8'});
  const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='yorimiyu-chat.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+
+/* Connection center: read-only automatic health checks; never submit secrets or start external tools. */
+let connectionBusy=false;
+async function checkConnections(){
+ if(connectionBusy||document.hidden)return;
+ connectionBusy=true;
+ const button=$('connections-refresh');button.disabled=true;
+ try{
+   const [runtime,graphiti,cloud]=await Promise.allSettled([
+     api('/api/runtime'),api('/api/graphiti/status'),api('/api/cloud/settings')
+   ]);
+   const show=(id,value)=>{if($(id))$(id).textContent=value;};
+   if(runtime.status==='fulfilled'){
+     const r=runtime.value;
+     show('sqliteGraph-state',r.neo4j?.state||'неизвестно');
+     show('letta-state',r.letta?.state||'неизвестно');
+     show('llm-state',r.llm?.state||'неизвестно');
+     show('chat-model-indicator','Модель: '+(r.llm?.state==='configured'?'подключена':'не настроена'));
+   }else show('sqliteGraph-state','Ошибка проверки');
+   if(graphiti.status==='fulfilled')show('graphiti-state',graphiti.value.state+' · очередь: '+graphiti.value.queued);
+   if(cloud.status==='fulfilled')show('cloud-state',cloud.value.has_key?'API-ключ сохранён локально':'API-ключ не настроен');
+   show('connections-last-check','Проверено в '+new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}));
+ }catch(error){$('connections-last-check').textContent='Ошибка проверки: '+error.message;}
+ finally{connectionBusy=false;button.disabled=false;}
+}
+$('connections-refresh').addEventListener('click',checkConnections);
+setInterval(()=>{if($('connections-auto').checked)checkConnections();},30000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&$('connections-auto').checked)checkConnections();});
+checkConnections();
+$('chat-input').addEventListener('keydown',event=>{
+ if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){
+   event.preventDefault();$('chat-form').requestSubmit();
+ }
 });

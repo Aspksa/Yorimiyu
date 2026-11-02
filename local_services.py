@@ -122,6 +122,7 @@ def graph_view(agent_id,query="",limit=150):
     return {"nodes":nodes,"edges":edges,"kind":"neo4j_local","graphiti_indexed":False}
 
 def backup(db):
+    db.commit()  # Avoid an open write transaction blocking SQLite online backup.
     BACKUPS.mkdir(parents=True,exist_ok=True)
     stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     path=BACKUPS/("yorimiyu-"+stamp+".sqlite3")
@@ -139,6 +140,7 @@ def restore_backup(db,name):
         raise ValueError("Invalid backup name")
     path=BACKUPS/name
     if not path.is_file():raise ValueError("Backup not found")
+    db.commit()
     check=sqlite3.connect(str(path))
     try:
         if check.execute("PRAGMA integrity_check").fetchone()[0]!="ok":

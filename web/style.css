@@ -181,3 +181,57 @@ header{margin-bottom:24px}
 @media(max-width:1180px){.chat-layout{grid-template-columns:minmax(0,1fr) 240px}.connection-details{grid-template-columns:1fr}}
 @media(max-width:900px){main{width:100%;padding:24px 18px 50px}.sidebar{flex-basis:auto}.chat-layout{grid-template-columns:1fr}.chat-side{order:2}.connection-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.graph-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:620px){.connection-cards{grid-template-columns:1fr}.chat-main #chat-form{flex-direction:column;align-items:stretch}.chat-message{max-width:95%}.chat-context a{margin-left:0}.connection-actions .muted{margin-left:0}}
+
+/* Yorimiyu 0.6 — unified accessibility and visual hierarchy audit */
+:root{--focus-ring:#b53d4b;--elevation-soft:0 3px 14px rgba(35,30,24,.035);--elevation-card:0 12px 35px rgba(35,30,24,.05)}
+html{scroll-padding-top:24px}
+body{line-height:1.5;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased}
+main{min-width:0}
+h1,h2,h3{line-height:1.22;letter-spacing:-.027em;text-wrap:balance}
+h1{font-weight:760}
+p{max-width:82ch}
+button,input,textarea,select{font:inherit}
+button,a,summary,select,input,textarea{outline-offset:3px}
+:where(button,a,summary,select,input,textarea,[tabindex="0"]):focus-visible{outline:3px solid var(--focus-ring)!important;outline-offset:3px}
+.skip-link{position:fixed;z-index:10000;top:12px;left:12px;padding:12px 18px;border-radius:10px;background:var(--accent);color:#fff;transform:translateY(-160%);transition:transform .15s}
+.skip-link:focus{transform:translateY(0)}
+.sidebar{z-index:20}
+.sidebar nav a{display:flex;align-items:center;min-height:44px}
+.sidebar nav a.active,.sidebar nav a[aria-current="page"]{font-weight:750}
+.status{display:flex;align-items:center;gap:5px}
+.panel{overflow:visible}
+.panel,.hero,.tiles article,.chat-main,.chat-side,.connection-details details,.graph-metrics>div{box-shadow:var(--elevation-soft)}
+.panel h2+.muted{margin-top:5px}
+.chat-main{isolation:isolate}
+.chat-history{overscroll-behavior:contain}
+.chat-message{position:relative}
+.chat-message.user{background:var(--accent-soft)}
+.chat-message.assistant{border-left:3px solid var(--gold,#b48746)}
+.chat-context{box-shadow:var(--elevation-soft)}
+.chat-toolbar{padding-bottom:14px;border-bottom:1px solid var(--border)}
+.chat-toolbar button{min-height:42px}
+.chat-main #chat-form textarea{min-width:0}
+.chat-side .memory-list li{border-bottom:1px solid var(--border);padding-block:12px}
+.graph-layout{min-width:0}
+.graph-canvas{position:relative;overflow:hidden;isolation:isolate}
+.graph-canvas svg{display:block;width:100%;height:auto;touch-action:none}
+.graph-canvas .graph-node-label{pointer-events:none;font-weight:650;paint-order:stroke;stroke:var(--base);stroke-width:3px;stroke-linejoin:round}
+.graph-inspector{min-width:0}
+.graph-tools button,.graph-tools select,.graph-tools input{min-height:42px}
+.graph-tools label{display:flex;align-items:center;gap:8px}
+.graph-metrics>div{border-top:3px solid var(--gold,#b48746)}
+.graph-metrics>div:first-child{border-top-color:var(--accent)}
+.connection-details details{transition:border-color .2s,box-shadow .2s}
+.connection-details details[open]{border-color:var(--gold,#b48746);box-shadow:var(--elevation-card)}
+.connection-details summary:hover{color:var(--accent)}
+.connection-cards .service{min-height:104px;justify-content:space-between}
+.connection-cards .service strong{font-variant-numeric:tabular-nums}
+.empty-state{display:grid;place-items:center;min-height:180px;margin:0 auto;padding:32px;text-align:center;color:var(--muted);font-size:14px;max-width:430px;line-height:1.7}
+.chat-history .empty-state{min-height:260px}
+#chat-state,#backup-state,#cloud-state,#graph-action-state{min-height:20px;overflow-wrap:anywhere}
+.settings-subnav button{min-height:44px}
+.settings-subnav button[aria-selected="true"]{box-shadow:0 4px 12px rgba(170,55,70,.12)}
+@media(max-width:900px){.sidebar{max-width:100vw}.chat-main{min-height:450px}.graph-canvas,.graph-canvas svg{min-height:380px}}
+@media(max-width:620px){main{padding-inline:14px}.panel{padding:18px}.graph-metrics>div{padding:13px}.graph-metrics strong{font-size:17px}.chat-main,.chat-side{padding:14px}.chat-history{padding-inline:3px}.chat-toolbar{gap:8px}.chat-toolbar button{flex:1 1 auto}.connection-details details{padding:14px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
+@media(prefers-contrast:more){:root{--border:#777;--muted:#555}.panel,.chat-main,.chat-side,.connection-cards .service{border-width:2px}}

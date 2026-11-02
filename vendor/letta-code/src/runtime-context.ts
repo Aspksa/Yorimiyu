@@ -1,0 +1,191 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { homedir, tmpdir } from "node:os";
+import { resolveActingUserId } from "@/agent/acting-user";
+import type { SkillSource } from "./agent/skills";
+import { isUsableDirectory } from "./helpers/usable-directory";
+import type { RuntimeExecutionSettings } from "./runtime-execution-settings";
+
+export type RuntimePermissionMode =
+  | "standard"
+  | "acceptEdits"
+  | "unrestricted"
+  | "strict";
+
+export interface RuntimeWorkspaceSandbox {
+  /** Runtime-owned writable workspace. */
+  root: string;
+  /** Parent tree whose peer workspaces must stay hidden. */
+  isolationRoot: string;
+}
+
+export interface RuntimeContextSnapshot {
+  /** Listener transport connection that owns the current turn, when present. */
+  connectionId?: string | null;
+  /** Registered listener device that owns the current turn, when present. */
+  environmentDeviceId?: string | null;
+  agentId?: string | null;
+  agentName?: string | null;
+  conversationId?: string | null;
+  /** Authenticated Cloud user responsible for the current turn. */
+  actingUserId?: string;
+  /**
+   * Cloud super run the current turn belongs to, when the relay delivered
+   * one. Carries NO credential: the MCP originator token itself stays in the
+   * agent-layer token store and is looked up by this id at MCP tool-run time.
+   */
+  mcpOriginatorSuperRunId?: string | null;
+  /**
+   * Resolve the execution context's current origin after a queued-turn swap.
+   * Internal-only function reference; never exported to child environments.
+   */
+  resolveMcpOriginatorSuperRunId?: () => string | null | undefined;
+  /**
+   * Resolve the client message ids that started the current listener turn,
+   * so background work can tag its later notification turns with them.
+   * Internal-only function reference; never exported to child environments.
+   */
+  resolveClientMessageIds?: () => string[];
+  /** Explicitly disable inherited process/runtime acting-user attribution. */
+  suppressActingUserFallback?: boolean;
+  skillsDirectory?: string | null;
+  skillSources?: SkillSource[];
+  /** Bundled skill IDs exposed when skillSources omits "bundled". */
+  bundledSkills?: string[];
+  workingDirectory?: string | null;
+  /**
+   * Set when the runtime-scoped working directory was found deleted and
+   * repaired to a fallback mid-turn. Holds the original (now missing) path
+   * until a shell tool consumes it to surface a note to the model.
+   */
+  workingDirectoryRecoveredFrom?: string | null;
+  toolContextId?: string | null;
+  /** Model-facing tool names from the current turn's filtered tool context. */
+  clientToolNames?: string[];
+  permissionMode?: RuntimePermissionMode;
+  workspaceSandbox?: RuntimeWorkspaceSandbox;
+  executionSettings?: RuntimeExecutionSettings;
+}
+
+const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();
+
+export function getRuntimeContext(): RuntimeContextSnapshot | undefined {
+  return runtimeContextStorage.getStore();
+}
+
+/** Resolve the current turn's customer, including inherited headless env scope. */
+export function getRuntimeActingUserId(): string | undefined {
+  const context = getRuntimeContext();
+  if (context?.suppressActingUserFallback) return undefined;
+  return resolveActingUserId(undefined, context?.actingUserId);
+}
+
+/** Capture actor inheritance as a tri-state value for delayed work. */
+export function getRuntimeActingUserAttribution(): string | null | undefined {
+  if (getRuntimeContext()?.suppressActingUserFallback) return null;
+  return getRuntimeActingUserId();
+}
+
+export function runWithRuntimeContext<T>(
+  snapshot: RuntimeContextSnapshot,
+  fn: () => T,
+): T {
+  const parent = runtimeContextStorage.getStore();
+  return runtimeContextStorage.run(
+    {
+      ...parent,
+      ...snapshot,
+      ...(snapshot.skillSources
+        ? { skillSources: [...snapshot.skillSources] }
+        : {}),
+    },
+    fn,
+  );
+}
+
+export function runOutsideRuntimeContext<T>(fn: () => T): T {
+  return runtimeContextStorage.exit(fn);
+}
+
+export function updateRuntimeContext(
+  update: Partial<RuntimeContextSnapshot>,
+): void {
+  const current = runtimeContextStorage.getStore();
+  if (!current) {
+    return;
+  }
+
+  Object.assign(
+    current,
+    update,
+    update.skillSources && {
+      skillSources: [...update.skillSources],
+    },
+  );
+}
+
+function getProcessWorkingDirectory(): string | null {
+  try {
+    return process.cwd();
+  } catch {
+    return null;
+  }
+}
+
+export function getFallbackWorkingDirectory(): string {
+  const fallback = [
+    process.env.USER_CWD,
+    getProcessWorkingDirectory(),
+    homedir(),
+    tmpdir(),
+    process.platform === "win32" ? undefined : "/",
+  ].find(isUsableDirectory);
+
+  if (fallback) {
+    return fallback;
+  }
+
+  // Extremely defensive fallback for pathological environments where every
+  // candidate disappeared. The caller will still surface a clear cwd error.
+  return process.platform === "win32" ? "C:\\" : "/";
+}
+
+export function getCurrentWorkingDirectory(): string {
+  const runtimeContext = runtimeContextStorage.getStore();
+  const workingDirectory = runtimeContext?.workingDirectory;
+  if (
+    typeof workingDirectory === "string" &&
+    isUsableDirectory(workingDirectory)
+  ) {
+    return workingDirectory;
+  }
+
+  const fallback = getFallbackWorkingDirectory();
+  if (
+    runtimeContext &&
+    typeof workingDirectory === "string" &&
+    workingDirectory.length > 0 &&
+    workingDirectory !== fallback
+  ) {
+    updateRuntimeContext({
+      workingDirectory: fallback,
+      workingDirectoryRecoveredFrom: workingDirectory,
+    });
+  }
+
+  return fallback;
+}
+
+/**
+ * Returns (and clears) the original path of a working directory that was
+ * repaired mid-turn because it no longer existed, or null when no recovery
+ * happened. Shell tools use this to tell the model its cwd changed.
+ */
+export function consumeWorkingDirectoryRecovery(): string | null {
+  const runtimeContext = runtimeContextStorage.getStore();
+  const recoveredFrom = runtimeContext?.workingDirectoryRecoveredFrom;
+  if (!runtimeContext || !recoveredFrom) {
+    return null;
+  }
+  runtimeContext.workingDirectoryRecoveredFrom = null;
+  return recoveredFrom;
+}

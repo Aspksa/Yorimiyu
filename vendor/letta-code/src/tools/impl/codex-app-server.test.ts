@@ -1,0 +1,917 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PassThrough } from "node:stream";
+import {
+  __resetCodexSessionsForTests,
+  CODEX_NOT_SIGNED_IN_ERROR,
+  type CodexAppServerTransport,
+  listCodexModels,
+  sendCodexMessage,
+  startCodexTurn,
+} from "./codex-app-server";
+import { CODEX_CAPACITY_ERROR } from "./codex-app-server-payloads";
+
+const CAPACITY_MESSAGE =
+  'unexpected status 409 Conflict: {"error":{"message":"No account capacity is available."}}';
+
+class FakeCodexTransport {
+  readonly requests: Array<Record<string, unknown>> = [];
+  readonly stdout = new PassThrough();
+  readonly stderr = new PassThrough();
+  readonly stdin = new PassThrough();
+  private threadId = "thread-1";
+  private turnId = "turn-1";
+  steerRace = false;
+  completeBeforeTurnStartSettles = false;
+  initializeError = false;
+  /** Fail this many upcoming turns, each with its own turn ID. */
+  failNextTurns = 0;
+  failure: Record<string, unknown> = {
+    message: CAPACITY_MESSAGE,
+    codexErrorInfo: { responseStreamConnectionFailed: { httpStatusCode: 409 } },
+  };
+  /** Complete the first turn started after the queued failures. */
+  completeAfterFailures?: string;
+  /** Called after a successful `turn/start` reply, e.g. to stream items. */
+  onTurnStarted?: () => void;
+  private failedTurns = 0;
+  account: Record<string, unknown> | null = {
+    account: { type: "chatgpt" },
+    requiresOpenaiAuth: true,
+  };
+  killed = false;
+
+  constructor() {
+    let buffered = "";
+    this.stdin.setEncoding("utf8");
+    this.stdin.on("data", (chunk: string) => {
+      buffered += chunk;
+      while (buffered.includes("\n")) {
+        const index = buffered.indexOf("\n");
+        const line = buffered.slice(0, index);
+        buffered = buffered.slice(index + 1);
+        if (line) this.handle(JSON.parse(line) as Record<string, unknown>);
+      }
+    });
+  }
+
+  transport(): CodexAppServerTransport {
+    return {
+      stdin: this.stdin,
+      stdout: this.stdout,
+      stderr: this.stderr,
+      kill: () => {
+        this.killed = true;
+      },
+    };
+  }
+
+  complete(text = "done", items = true): void {
+    if (!items) {
+      this.send({
+        method: "item/completed",
+        params: {
+          threadId: this.threadId,
+          turnId: this.turnId,
+          item: { type: "agentMessage", text },
+        },
+      });
+    }
+    this.send({
+      method: "turn/completed",
+      params: {
+        threadId: this.threadId,
+        turn: {
+          id: this.turnId,
+          status: "completed",
+          items: items ? [{ type: "agentMessage", text }] : [],
+        },
+      },
+    });
+  }
+
+  private handle(request: Record<string, unknown>): void {
+    this.requests.push(request);
+    if (typeof request.id !== "number") return;
+    const method = request.method;
+    if (method === "initialize") {
+      if (this.initializeError) {
+        this.send({ id: request.id, error: { message: "initialize failed" } });
+      } else {
+        this.reply(request.id, {});
+      }
+    }
+    if (method === "account/read") {
+      if (this.account) this.reply(request.id, this.account);
+      else this.send({ id: request.id, error: { message: "unknown method" } });
+    }
+    if (method === "thread/start" || method === "thread/resume") {
+      const params = request.params as Record<string, unknown>;
+      if (typeof params.threadId === "string") this.threadId = params.threadId;
+      this.reply(request.id, { thread: { id: this.threadId } });
+    }
+    if (method === "turn/start" && this.failNextTurns > 0) {
+      this.failNextTurns--;
+      const turnId = `failed-turn-${++this.failedTurns}`;
+      this.reply(request.id, {
+        turn: { id: turnId, status: "inProgress", items: [] },
+      });
+      this.fail(turnId);
+      return;
+    }
+    if (method === "turn/start") {
+      this.reply(request.id, {
+        turn: { id: this.turnId, status: "inProgress", items: [] },
+      });
+      if (this.completeBeforeTurnStartSettles) {
+        this.complete("fast completion", false);
+      }
+      this.onTurnStarted?.();
+      if (this.completeAfterFailures !== undefined) {
+        this.complete(this.completeAfterFailures);
+      }
+    }
+    if (method === "turn/steer") {
+      if (this.steerRace) {
+        this.complete("first turn done");
+        this.turnId = "turn-2";
+        this.send({
+          id: request.id,
+          error: { message: "active turn changed" },
+        });
+      } else {
+        this.reply(request.id, { turnId: this.turnId });
+      }
+    }
+    if (method === "turn/interrupt") this.reply(request.id, {});
+  }
+
+  private reply(id: number, result: Record<string, unknown>): void {
+    this.send({ id, result });
+  }
+
+  item(
+    method: "item/started" | "item/completed",
+    item: Record<string, unknown>,
+  ): void {
+    this.send({
+      method,
+      params: { threadId: this.threadId, turnId: this.turnId, item },
+    });
+  }
+
+  errorNotification(
+    error: Record<string, unknown>,
+    turnId = this.turnId,
+    willRetry = false,
+  ): void {
+    this.send({
+      method: "error",
+      params: { threadId: this.threadId, turnId, error, willRetry },
+    });
+  }
+
+  fail(
+    turnId = this.turnId,
+    error: Record<string, unknown> | null = this.failure,
+  ) {
+    this.send({
+      method: "turn/completed",
+      params: {
+        threadId: this.threadId,
+        turn: { id: turnId, status: "failed", items: [], error },
+      },
+    });
+  }
+
+  close(detail = "transport died"): void {
+    this.stderr.write(detail);
+    this.stdout.end();
+  }
+
+  private send(message: Record<string, unknown>): void {
+    this.stdout.write(`${JSON.stringify(message)}\n`);
+  }
+}
+
+afterEach(() => __resetCodexSessionsForTests());
+
+describe("Codex app-server lifecycle", () => {
+  test("starts a native thread and turn, then resolves completion", async () => {
+    const fake = new FakeCodexTransport();
+    let started: string | undefined;
+    let admitted: string | undefined;
+    const handle = await startCodexTurn(
+      {
+        prompt: "Implement it",
+        parentAgentId: "parent",
+        cwd: "/repo",
+        beforeStart: async (threadId) => {
+          admitted = threadId;
+          expect(fake.requests.map((request) => request.method)).not.toContain(
+            "turn/start",
+          );
+        },
+        onStarted: (threadId) => {
+          started = threadId;
+        },
+      },
+      { createTransport: () => fake.transport() },
+    );
+    expect(handle.threadId).toBe("thread-1");
+    expect(admitted).toBe("thread-1");
+    expect(started).toBe("thread-1");
+    expect(fake.requests.map((request) => request.method)).toContain(
+      "turn/start",
+    );
+    fake.complete("finished");
+    expect(await handle.completion).toMatchObject({
+      agentId: "codex_thread-1",
+      runtimeSessionId: "thread-1",
+      report: "finished",
+      success: true,
+    });
+  });
+
+  test("uses item/completed agent text when turn/completed items are empty", async () => {
+    const fake = new FakeCodexTransport();
+    const handle = await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport() },
+    );
+    fake.complete("real final text", false);
+    expect(await handle.completion).toMatchObject({
+      report: "real final text",
+      success: true,
+    });
+  });
+
+  test("emits each tool-like item once as a tool call", async () => {
+    const fake = new FakeCodexTransport();
+    const calls: Array<{ id: string; name: string; args: string }> = [];
+    const handle = await startCodexTurn(
+      {
+        prompt: "Work",
+        parentAgentId: "parent",
+        cwd: "/repo",
+        onToolCall: (call) => calls.push(call),
+      },
+      { createTransport: () => fake.transport() },
+    );
+    const command = {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "bun test",
+      status: "inProgress",
+    };
+    fake.item("item/started", command);
+    fake.item("item/completed", { ...command, status: "completed" });
+    fake.item("item/started", {
+      type: "fileChange",
+      id: "patch-1",
+      changes: [{ path: "src/a.ts", kind: { type: "update" }, diff: "" }],
+      status: "inProgress",
+    });
+    fake.item("item/started", {
+      type: "mcpToolCall",
+      id: "mcp-1",
+      server: "linear",
+      tool: "get_issue",
+      arguments: { id: "LET-1" },
+      status: "inProgress",
+    });
+    // Web search carries its query only once it completes.
+    fake.item("item/started", { type: "webSearch", id: "ws-1", query: "" });
+    fake.item("item/completed", {
+      type: "webSearch",
+      id: "ws-1",
+      query: "bun test",
+    });
+    fake.item("item/started", { type: "reasoning", id: "r-1", summary: [] });
+    fake.item("item/started", { type: "agentMessage", id: "m-1", text: "" });
+    fake.complete("done");
+    await handle.completion;
+    expect(calls).toEqual([
+      { id: "cmd-1", name: "Bash", args: '{"command":"bun test"}' },
+      { id: "patch-1", name: "Edit", args: '{"files":["src/a.ts"]}' },
+      { id: "mcp-1", name: "linear/get_issue", args: '{"id":"LET-1"}' },
+      { id: "ws-1", name: "WebSearch", args: '{"query":"bun test"}' },
+    ]);
+  });
+
+  test("reports each completed agent message once as text", async () => {
+    const fake = new FakeCodexTransport();
+    const events: string[] = [];
+    const handle = await startCodexTurn(
+      {
+        prompt: "Work",
+        parentAgentId: "parent",
+        cwd: "/repo",
+        onText: (text) => events.push(`text:${text}`),
+        onToolCall: (call) => events.push(`tool:${call.name}`),
+      },
+      { createTransport: () => fake.transport() },
+    );
+    const message = { type: "agentMessage", id: "m-1", text: "Running tests." };
+    // Started items carry no text yet; only the completed message counts.
+    fake.item("item/started", { ...message, text: "" });
+    fake.item("item/completed", message);
+    fake.item("item/completed", message);
+    fake.item("item/started", {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "bun test",
+      status: "inProgress",
+    });
+    fake.complete("done");
+    await handle.completion;
+    expect(events).toEqual(["text:Running tests.", "tool:Bash"]);
+  });
+
+  test("replays completion that arrives before turn/start settles", async () => {
+    const fake = new FakeCodexTransport();
+    fake.completeBeforeTurnStartSettles = true;
+    const handle = await startCodexTurn(
+      { prompt: "Fast", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport() },
+    );
+    expect(await handle.completion).toMatchObject({
+      report: "fast completion",
+      success: true,
+    });
+  });
+
+  test("disposes the transport when initialize fails", async () => {
+    const fake = new FakeCodexTransport();
+    fake.initializeError = true;
+    await expect(
+      startCodexTurn(
+        { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+        { createTransport: () => fake.transport() },
+      ),
+    ).rejects.toThrow("initialize failed");
+    expect(fake.killed).toBe(true);
+  });
+
+  test("fails before starting a thread when Codex needs an OpenAI sign-in", async () => {
+    const fake = new FakeCodexTransport();
+    fake.account = { account: null, requiresOpenaiAuth: true };
+    await expect(
+      startCodexTurn(
+        { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+        { createTransport: () => fake.transport() },
+      ),
+    ).rejects.toThrow(CODEX_NOT_SIGNED_IN_ERROR);
+    expect(fake.requests.map((request) => request.method)).not.toContain(
+      "thread/start",
+    );
+    expect(fake.killed).toBe(true);
+  });
+
+  test.each([
+    [
+      "a provider that needs no OpenAI login (managed proxy)",
+      {
+        account: null,
+        requiresOpenaiAuth: false,
+      },
+    ],
+    ["a Codex without account/read", null],
+  ])("starts the turn for %s", async (_label, account) => {
+    const fake = new FakeCodexTransport();
+    fake.account = account;
+    const handle = await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport() },
+    );
+    fake.complete();
+    expect(await handle.completion).toMatchObject({ success: true });
+  });
+
+  test("fails active completion and evicts the session when stdout closes", async () => {
+    const first = new FakeCodexTransport();
+    const handle = await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => first.transport() },
+    );
+    first.close("boom");
+    expect(await handle.completion).toMatchObject({
+      success: false,
+      error: expect.stringContaining("boom"),
+    });
+    const second = new FakeCodexTransport();
+    await sendCodexMessage(
+      {
+        threadId: "thread-1",
+        prompt: "retry",
+        parentAgentId: "parent",
+        cwd: "/repo",
+      },
+      {
+        env: { HOME: "/home/test", PATH: "/usr/bin:/bin" },
+        createTransport: ({ env }) => {
+          if (process.platform !== "win32") {
+            expect(env.PATH).toBe("/usr/bin:/bin:/home/test/.local/bin");
+          }
+          return second.transport();
+        },
+      },
+    );
+    expect(second.requests.map((request) => request.method)).toContain(
+      "thread/resume",
+    );
+  });
+
+  test.each([
+    {
+      code: null,
+      signal: "SIGKILL" as const,
+      detail: "",
+      expected: " (signal SIGKILL; possibly out of memory)",
+    },
+    {
+      code: null,
+      signal: "SIGTERM" as const,
+      detail: "",
+      expected: " (signal SIGTERM; possibly out of memory)",
+    },
+    { code: 137, signal: null, detail: "", expected: " (exit code 137)" },
+    { code: 0, signal: null, detail: "", expected: " (exit code 0)" },
+    {
+      code: null,
+      signal: "SIGKILL" as const,
+      detail: "boom",
+      expected: " (signal SIGKILL; possibly out of memory): boom",
+    },
+    {
+      code: 143,
+      signal: null,
+      detail: "startup warning",
+      expected: " (exit code 143; possibly out of memory): startup warning",
+    },
+    {
+      code: null,
+      signal: "SIGTERM" as const,
+      detail: `stale startup warning${"tail".repeat(100)}`,
+      expected: ` (signal SIGTERM; possibly out of memory): ${"tail".repeat(75)}`,
+    },
+  ])(
+    "reports transport exit info with stderr tail: $expected",
+    async ({ code, signal, detail, expected }) => {
+      const fake = new FakeCodexTransport();
+      let resolveExit!: (exit: {
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      }) => void;
+      const exited = new Promise<{
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      }>((resolve) => {
+        resolveExit = resolve;
+      });
+      const handle = await startCodexTurn(
+        { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+        { createTransport: () => ({ ...fake.transport(), exited }) },
+      );
+      fake.close(detail);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      resolveExit({ code, signal });
+      expect(await handle.completion).toMatchObject({
+        success: false,
+        error: `Codex app-server closed${expected}`,
+      });
+    },
+  );
+
+  test("rejects pending requests when stdout errors and the child does not exit", async () => {
+    const stdout = new PassThrough();
+    const startedAt = Date.now();
+    const pending = startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      {
+        createTransport: () => ({
+          stdin: new PassThrough(),
+          stdout,
+          exited: new Promise(() => {}),
+        }),
+      },
+    );
+    const rejected = pending.catch((error: unknown) => error);
+    stdout.destroy(new Error("stdout failed"));
+    expect(await rejected).toEqual(new Error("Codex app-server closed"));
+    expect(Date.now() - startedAt).toBeLessThan(3_000);
+  });
+
+  test("fails the active turn when stdout errors and the child does not exit", async () => {
+    const fake = new FakeCodexTransport();
+    const handle = await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      {
+        createTransport: () => ({
+          ...fake.transport(),
+          exited: new Promise(() => {}),
+        }),
+      },
+    );
+    const startedAt = Date.now();
+    fake.stdout.destroy(new Error("stdout failed"));
+    expect(await handle.completion).toMatchObject({
+      success: false,
+      error: "Codex app-server closed",
+    });
+    expect(Date.now() - startedAt).toBeLessThan(3_000);
+  });
+
+  test("routes messages to active turns through turn/steer", async () => {
+    const fake = new FakeCodexTransport();
+    await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport() },
+    );
+    const receipt = await sendCodexMessage({
+      threadId: "thread-1",
+      prompt: "Steer now",
+      parentAgentId: "parent",
+      cwd: "/repo",
+    });
+    expect(receipt.mode).toBe("steered");
+    expect(fake.requests.map((request) => request.method)).toContain(
+      "turn/steer",
+    );
+    expect(fake.requests.map((request) => request.method)).not.toContain(
+      "codex exec resume",
+    );
+  });
+
+  test("falls back exactly once when completion races steering rejection", async () => {
+    const fake = new FakeCodexTransport();
+    await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport() },
+    );
+    fake.steerRace = true;
+    const receipt = await sendCodexMessage({
+      threadId: "thread-1",
+      prompt: "Do not drop this",
+      parentAgentId: "parent",
+      cwd: "/repo",
+    });
+    expect(receipt.mode).toBe("new_turn");
+    expect(
+      fake.requests.filter((request) => request.method === "turn/steer"),
+    ).toHaveLength(1);
+    expect(
+      fake.requests.filter((request) => request.method === "turn/start"),
+    ).toHaveLength(2);
+  });
+
+  test("serializes concurrent idle messages and steers the second", async () => {
+    const fake = new FakeCodexTransport();
+    const initial = await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport() },
+    );
+    fake.complete("initial done");
+    await initial.completion;
+    const receipts = await Promise.all([
+      sendCodexMessage({
+        threadId: "thread-1",
+        prompt: "First",
+        parentAgentId: "parent",
+        cwd: "/repo",
+      }),
+      sendCodexMessage({
+        threadId: "thread-1",
+        prompt: "Second",
+        parentAgentId: "parent",
+        cwd: "/repo",
+      }),
+    ]);
+    expect(receipts.map((receipt) => receipt.mode)).toEqual([
+      "new_turn",
+      "steered",
+    ]);
+  });
+
+  test("disposes idle sessions and resumes them on the next message", async () => {
+    const first = new FakeCodexTransport();
+    const handle = await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => first.transport(), idleTimeoutMs: 1 },
+    );
+    first.complete("done");
+    await handle.completion;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(first.killed).toBe(true);
+
+    const second = new FakeCodexTransport();
+    await sendCodexMessage(
+      {
+        threadId: "thread-1",
+        prompt: "Continue",
+        parentAgentId: "parent",
+        cwd: "/repo",
+      },
+      { createTransport: () => second.transport() },
+    );
+    expect(second.requests.map((request) => request.method)).toContain(
+      "thread/resume",
+    );
+  });
+
+  test.each([false, true])(
+    "passes MCP reminder to new and resumed threads without duplicating user text (resume=%s)",
+    async (resume) => {
+      const fake = new FakeCodexTransport();
+      await startCodexTurn(
+        {
+          prompt: "Implement it",
+          parentAgentId: "parent",
+          cwd: "/repo",
+          mcpReminder: "MCP reminder",
+          ...(resume ? { resumeThreadId: "thread-1" } : {}),
+        },
+        { createTransport: () => fake.transport() },
+      );
+      const threadStart = fake.requests.find(
+        (request) =>
+          request.method === (resume ? "thread/resume" : "thread/start"),
+      );
+      const turnStart = fake.requests.find(
+        (request) => request.method === "turn/start",
+      );
+      expect(threadStart?.params).toMatchObject({
+        developerInstructions: "MCP reminder",
+      });
+      expect(turnStart?.params).toMatchObject({
+        input: [{ type: "text", text: "Implement it" }],
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" },
+      });
+      if (!resume) {
+        expect(threadStart?.params).toMatchObject({
+          approvalPolicy: "never",
+          sandbox: "danger-full-access",
+        });
+      }
+    },
+  );
+
+  test("interrupts the active turn on cancellation", async () => {
+    const fake = new FakeCodexTransport();
+    const controller = new AbortController();
+    await startCodexTurn(
+      {
+        prompt: "Initial",
+        parentAgentId: "parent",
+        cwd: "/repo",
+        signal: controller.signal,
+      },
+      { createTransport: () => fake.transport() },
+    );
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fake.requests.map((request) => request.method)).toContain(
+      "turn/interrupt",
+    );
+  });
+});
+
+describe("Codex capacity failures", () => {
+  function turnStarts(fake: FakeCodexTransport) {
+    return fake.requests.filter((request) => request.method === "turn/start");
+  }
+
+  test("retries a 409 capacity failure with backoff before any tool ran", async () => {
+    const fake = new FakeCodexTransport();
+    fake.failNextTurns = 2;
+    fake.completeAfterFailures = "recovered";
+    const delays: number[] = [];
+    const handle = await startCodexTurn(
+      { prompt: "Implement it", parentAgentId: "parent", cwd: "/repo" },
+      {
+        createTransport: () => fake.transport(),
+        sleep: async (ms) => {
+          delays.push(ms);
+        },
+      },
+    );
+    expect(await handle.completion).toMatchObject({
+      success: true,
+      report: "recovered",
+    });
+    expect(delays).toEqual([1_000, 2_000]);
+    const starts = turnStarts(fake);
+    expect(starts).toHaveLength(3);
+    for (const start of starts) {
+      expect(start.params).toMatchObject({
+        threadId: "thread-1",
+        input: [{ type: "text", text: "Implement it" }],
+      });
+    }
+  });
+
+  test("does not report text again when a retried attempt repeats it", async () => {
+    const fake = new FakeCodexTransport();
+    const texts: string[] = [];
+    const handle = await startCodexTurn(
+      {
+        prompt: "Implement it",
+        parentAgentId: "parent",
+        cwd: "/repo",
+        onText: (text) => texts.push(text),
+      },
+      { createTransport: () => fake.transport(), sleep: async () => {} },
+    );
+    // The first attempt says something, then fails for capacity.
+    fake.item("item/completed", {
+      type: "agentMessage",
+      id: "m-1",
+      text: "Checking the repo.",
+    });
+    // The retry replays the prompt, so Codex repeats the message under a new
+    // item ID before saying something new.
+    fake.onTurnStarted = () => {
+      fake.item("item/completed", {
+        type: "agentMessage",
+        id: "m-2",
+        text: "Checking the repo.",
+      });
+      fake.item("item/completed", {
+        type: "agentMessage",
+        id: "m-3",
+        text: "Tests pass.",
+      });
+      fake.complete("Tests pass.");
+    };
+    fake.fail();
+    expect(await handle.completion).toMatchObject({ success: true });
+    expect(turnStarts(fake)).toHaveLength(2);
+    expect(texts).toEqual(["Checking the repo.", "Tests pass."]);
+  });
+
+  test("explains the capacity failure after the last retry", async () => {
+    const fake = new FakeCodexTransport();
+    fake.failNextTurns = 3;
+    const handle = await startCodexTurn(
+      { prompt: "Implement it", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport(), sleep: async () => {} },
+    );
+    const result = await handle.completion;
+    expect(result.success).toBe(false);
+    expect(result.error).toStartWith(CODEX_CAPACITY_ERROR);
+    expect(result.error).toContain("409 Conflict");
+    expect(turnStarts(fake)).toHaveLength(3);
+  });
+
+  test("does not retry once a tool item has run in the turn", async () => {
+    const fake = new FakeCodexTransport();
+    let slept = false;
+    const handle = await startCodexTurn(
+      { prompt: "Implement it", parentAgentId: "parent", cwd: "/repo" },
+      {
+        createTransport: () => fake.transport(),
+        sleep: async () => {
+          slept = true;
+        },
+      },
+    );
+    fake.item("item/started", {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "touch file",
+      status: "inProgress",
+    });
+    fake.fail();
+    const result = await handle.completion;
+    expect(result.error).toStartWith(CODEX_CAPACITY_ERROR);
+    expect(slept).toBe(false);
+    expect(turnStarts(fake)).toHaveLength(1);
+  });
+
+  test("stops retrying when the turn is cancelled during backoff", async () => {
+    const fake = new FakeCodexTransport();
+    fake.failNextTurns = 3;
+    const controller = new AbortController();
+    const handle = await startCodexTurn(
+      {
+        prompt: "Implement it",
+        parentAgentId: "parent",
+        cwd: "/repo",
+        signal: controller.signal,
+      },
+      {
+        createTransport: () => fake.transport(),
+        sleep: async () => controller.abort(),
+      },
+    );
+    const result = await handle.completion;
+    expect(result.error).toStartWith(CODEX_CAPACITY_ERROR);
+    expect(turnStarts(fake)).toHaveLength(1);
+  });
+
+  test("interrupting a follow-up turn targets the retry and stops further retries", async () => {
+    const fake = new FakeCodexTransport();
+    const initial = await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport() },
+    );
+    fake.complete("initial done");
+    await initial.completion;
+    fake.failNextTurns = 2;
+    const receipt = await sendCodexMessage({
+      threadId: "thread-1",
+      prompt: "Follow up",
+      parentAgentId: "parent",
+      cwd: "/repo",
+    });
+    // The first attempt fails for capacity; interrupt before the retry starts.
+    await receipt.interrupt?.();
+    const result = await receipt.completion;
+    expect(result?.error).toStartWith(CODEX_CAPACITY_ERROR);
+    expect(turnStarts(fake)).toHaveLength(2);
+    expect(
+      fake.requests.find((request) => request.method === "turn/interrupt")
+        ?.params,
+    ).toMatchObject({ turnId: "failed-turn-1" });
+  });
+
+  test("does not retry failures that are not capacity errors", async () => {
+    const fake = new FakeCodexTransport();
+    fake.failNextTurns = 1;
+    fake.failure = { message: "model refused", codexErrorInfo: "other" };
+    const handle = await startCodexTurn(
+      { prompt: "Implement it", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport(), sleep: async () => {} },
+    );
+    expect(await handle.completion).toMatchObject({
+      success: false,
+      error: "model refused",
+    });
+    expect(turnStarts(fake)).toHaveLength(1);
+  });
+
+  test("includes Codex error notifications in the failed turn's error", async () => {
+    const fake = new FakeCodexTransport();
+    const handle = await startCodexTurn(
+      { prompt: "Implement it", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport(), sleep: async () => {} },
+    );
+    fake.errorNotification({ message: "Reconnecting... 1/5" }, "turn-1", true);
+    fake.errorNotification({
+      message: "stream disconnected before completion",
+    });
+    fake.fail("turn-1", null);
+    expect(await handle.completion).toMatchObject({
+      success: false,
+      error: "stream disconnected before completion",
+    });
+  });
+
+  test("does not repeat an error notification that matches the turn error", async () => {
+    const fake = new FakeCodexTransport();
+    const handle = await startCodexTurn(
+      { prompt: "Implement it", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport(), sleep: async () => {} },
+    );
+    fake.errorNotification({ message: "quota exceeded" });
+    fake.errorNotification({ message: "context window exceeded" });
+    fake.fail("turn-1", { message: "quota exceeded" });
+    expect(await handle.completion).toMatchObject({
+      error: "quota exceeded; context window exceeded",
+    });
+  });
+
+  test("treats a 409 reported only through an error notification as a capacity failure", async () => {
+    const fake = new FakeCodexTransport();
+    const handle = await startCodexTurn(
+      { prompt: "Implement it", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport(), sleep: async () => {} },
+    );
+    fake.item("item/started", {
+      type: "fileChange",
+      id: "patch-1",
+      changes: [{ path: "src/a.ts" }],
+    });
+    fake.errorNotification({ message: CAPACITY_MESSAGE });
+    fake.fail("turn-1", null);
+    const result = await handle.completion;
+    expect(result.error).toStartWith(CODEX_CAPACITY_ERROR);
+    expect(result.error).toContain("409 Conflict");
+  });
+});
+
+describe("Codex model discovery", () => {
+  test("reports a missing codex executable instead of a stdin EPIPE", async () => {
+    const emptyPath = mkdtempSync(join(tmpdir(), "letta-codex-missing-"));
+    try {
+      await expect(
+        listCodexModels(process.cwd(), { PATH: emptyPath, Path: emptyPath }),
+      ).rejects.toThrow("Required executable 'codex' was not found on PATH");
+    } finally {
+      rmSync(emptyPath, { force: true, recursive: true });
+    }
+  });
+});

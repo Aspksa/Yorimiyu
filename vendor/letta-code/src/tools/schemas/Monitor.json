@@ -1,0 +1,63 @@
+{
+  "type": "object",
+  "properties": {
+    "description": {
+      "type": "string",
+      "description": "Clear, concise user-facing description of the update you are waiting for. This may be shown directly in chat, so make it grammatical by itself. Describe the expected event, not the polling command or monitor implementation. Prefer `CI results and review comments for the auth fix`, `Deployment completion or failure`, or `New errors in the API logs` over internal labels like `PR checks and state transitions`."
+    },
+    "timeout_ms": {
+      "type": "number",
+      "minimum": 1000,
+      "default": 300000,
+      "description": "Kill the monitor after this deadline. Default 300000ms. Maximum {{MONITOR_MAX_TIMEOUT}}. Ignored when persistent is true."
+    },
+    "persistent": {
+      "type": "boolean",
+      "default": false,
+      "description": "Run until TaskStop or session end. In managed Cloud sandboxes, it still stops after {{MONITOR_MAX_TIMEOUT}} (this sandbox's monitor cap); elsewhere there is no timeout. Call Monitor again to re-arm it. For much longer waits in Cloud, use Wake/cron."
+    },
+    "backup_after_seconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 604800,
+      "description": "Optional backup: if the monitor emits nothing for this many seconds (from start or its last event), a durable Wake fires in this conversation so a stalled watch can't go silent. Each event resets the clock; the backup is cancelled when the monitor ends or is stopped. Survives restarts of this process."
+    },
+    "backup_prompt": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "Instruction for the backup wake's turn. Defaults to checking the real state of what the monitor watches, then reporting, re-arming, or stopping it."
+    },
+    "command": {
+      "type": "string",
+      "description": "Shell command or script. Each stdout line is an event; exit ends the watch."
+    },
+    "ws": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "protocols": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          }
+        }
+      },
+      "required": ["url"],
+      "additionalProperties": false,
+      "description": "WebSocket to open. Each text frame is an event; binary frames are reported as a placeholder line. Socket close ends the watch. Cannot be combined with command or script."
+    },
+    "script": {
+      "type": "string",
+      "description": "JavaScript watch loop with CodeMode's globals plus emit(text) and sleep(ms). Cannot be combined with command or ws."
+    },
+    "args": {
+      "description": "Optional input exposed to script as args."
+    }
+  },
+  "required": ["description"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

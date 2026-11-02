@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
 let currentAgent = '';
-let useNeo4j = false;
+let useSQLiteGraph = false;
 let graphQuery = '';
 async function api(path, options) {
   const response = await fetch(path, {credentials:'same-origin', ...options});
@@ -13,7 +13,7 @@ async function refresh() {
   try {
     const [status, agents, graphiti, runtimes] = await Promise.all([api('/api/status'),api('/api/agents'),api('/api/graphiti/status'),api('/api/runtime')]);
     $('letta-state').textContent = runtimes.letta.state;
-    $('neo4j-state').textContent = runtimes.neo4j?.state || 'offline';
+    $('sqliteGraph-state').textContent = runtimes.sqliteGraph?.state || 'offline';
     $('llm-state').textContent = runtimes.llm.state;
     $('graphiti-state').textContent = graphiti.state + ' · очередь: ' + graphiti.queued;
     $('connection-status').textContent = 'Локальная память работает';
@@ -68,7 +68,7 @@ async function refreshWorkspace() {
   if (!currentAgent) return;
   const [chat, graphData, learning] = await Promise.all([
     api('/api/chat?agent_id='+encodeURIComponent(currentAgent)),
-    api((useNeo4j ? '/api/neo4j/graph?agent_id=' : '/api/graph?agent_id=')+encodeURIComponent(currentAgent)+(useNeo4j?'&q='+encodeURIComponent(graphQuery):'')),
+    api((useSQLiteGraph ? '/api/sqlite-graph/graph?agent_id=' : '/api/graph?agent_id=')+encodeURIComponent(currentAgent)+(useSQLiteGraph?'&q='+encodeURIComponent(graphQuery):'')),
     api('/api/learning?agent_id='+encodeURIComponent(currentAgent))
   ]);
   const messages=chat.messages;
@@ -167,17 +167,17 @@ $('cloud-form').onsubmit=async e=>{
 };
 $('graph-search-form').onsubmit=async e=>{
   e.preventDefault();if(!currentAgent)return;
-  graphQuery=$('graph-query').value;useNeo4j=true;
-  try{await refreshWorkspace();$('graph-action-state').textContent='Граф Neo4j загружен';}
-  catch(err){$('graph-action-state').textContent='Neo4j: '+err.message;}
+  graphQuery=$('graph-query').value;useSQLiteGraph=true;
+  try{await refreshWorkspace();$('graph-action-state').textContent='Граф SQLite загружен';}
+  catch(err){$('graph-action-state').textContent='SQLite: '+err.message;}
 };
 $('graph-index').onclick=async()=>{
   if(!currentAgent)return alert('Выберите агента');
   $('graph-index').disabled=true;
   try{
-    const result=await jsonPost('/api/neo4j/index',{agent_id:currentAgent});
+    const result=await jsonPost('/api/sqlite-graph/index',{agent_id:currentAgent});
     $('graph-action-state').textContent='Индексировано: '+result.indexed;
-    useNeo4j=true;await refreshWorkspace();
+    useSQLiteGraph=true;await refreshWorkspace();
   }catch(err){$('graph-action-state').textContent=err.message;}
   finally{$('graph-index').disabled=false;}
 };
@@ -242,7 +242,7 @@ const viewMeta={
  graph:['Граф знаний','Интерактивная карта реальных связей с масштабированием и исследованием.'],
  agents:['Агенты','Управление профилями агентов и сохранёнными записями.'],
  learning:['Развитие','Проверка и подтверждение предложений для памяти.'],
- services:['Подключения','Cloud.ru, Neo4j, Graphiti, Letta и резервные копии.'],
+ services:['Подключения','Cloud.ru, SQLite, Graphiti, Letta и резервные копии.'],
  settings:['Настройки','Внешний вид, размер интерфейса и персонализация.']
 };
 function navigateWorkspace(){
@@ -290,7 +290,7 @@ $('memory-filter').addEventListener('input',filterMemories);
 const settingsInfo={
  ai:['Cloud.ru и модели ИИ','Адрес модели, её ID и API-ключ настраиваются в разделе «Подключения». Ключ хранится локально в файле настроек сервера, не в браузере.'],
  memory:['Память и данные','Записи хранятся локально. Используйте раздел «Память» для просмотра, фильтрации и добавления знаний.'],
- graph:['Граф и Neo4j','Индексирование в Neo4j запускается вручную в «Подключениях». Граф показывает реальные ответы локального API.'],
+ graph:['Граф и SQLite','Индексирование в SQLite запускается вручную в «Подключениях». Граф показывает реальные ответы локального API.'],
  backup:['Резервные копии','Создание и восстановление резервных копий SQLite доступны в «Подключениях». Перед восстановлением требуется подтверждение.'],
  safety:['Безопасность','Не публикуйте файл data/cloudru-settings.json, каталог .runtime или резервные копии. Действия Letta требуют подтверждения.']
 };

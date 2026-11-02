@@ -25,7 +25,7 @@ if exist ".runtime\python\python.exe" (
   set "PY_FOUND=1"
   ".runtime\python\python.exe" -c "import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
   if not errorlevel 1 (
-    set "PY_EXE=%CD%\.runtime\python\python.exe"
+    set "PY_EXE=.runtime\python\python.exe"
     goto start
   )
 )
@@ -53,7 +53,6 @@ goto bad_python
 
 :start
 echo [Yorimiyu] Python: %PY_EXE% %PY_ARGS%
-echo [Yorimiyu] Project: %CD%
 echo [Yorimiyu] Starting local dashboard...
 "%PY_EXE%" %PY_ARGS% -u "launcher.py" %*
 set "RC=%ERRORLEVEL%"

@@ -44,3 +44,15 @@ $('memory-form').onsubmit = async event => {
   } catch(error) { alert(error.message); }
 };
 refresh();
+
+$('graphiti-deliver').onclick = async () => {
+  if (!confirm('Передать следующую локальную запись в Graphiti? Это отправит текст в настроенный локальный сервис.')) return;
+  const button = $('graphiti-deliver');
+  button.disabled = true;
+  try {
+    const result = await api('/api/graphiti/deliver', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});
+    $('graphiti-delivery-result').textContent = result.delivery.state === 'accepted_not_indexed' ? 'Graphiti принял запись в очередь; индексация не подтверждена.' : 'Очередь пуста.';
+    await refresh();
+  } catch(error) { $('graphiti-delivery-result').textContent = 'Передача не удалась: '+error.message; }
+  finally { button.disabled = false; }
+};

@@ -19,33 +19,12 @@ if not exist "install-python.ps1" goto missing
 if not exist "logs" mkdir "logs" 2>nul
 set "PY_EXE="
 set "PY_ARGS="
-set "PY_FOUND=0"
 
-rem Check the portable interpreter, then the Windows launcher, then PATH.
+rem Always prefer the project-owned interpreter. Windows Python aliases can be broken.
 if exist ".runtime\python\python.exe" (
-  set "PY_FOUND=1"
-  ".runtime\python\python.exe" -c "import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
+  ".runtime\python\python.exe" -c "import sys,sqlite3,ssl,os;sys.exit(0 if sys.version_info >= (3,10) and os.path.isfile(sys.executable) else 1)" >nul 2>&1
   if not errorlevel 1 (
     set "PY_EXE=.runtime\python\python.exe"
-    goto start
-  )
-)
-where py.exe >nul 2>&1
-if not errorlevel 1 (
-  set "PY_FOUND=1"
-  py.exe -3 -c "import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
-  if not errorlevel 1 (
-    set "PY_EXE=py.exe"
-    set "PY_ARGS=-3"
-    goto start
-  )
-)
-where python.exe >nul 2>&1
-if not errorlevel 1 (
-  set "PY_FOUND=1"
-  python.exe -c "import sys,sqlite3,ssl;sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
-  if not errorlevel 1 (
-    set "PY_EXE=python.exe"
     goto start
   )
 )
@@ -65,7 +44,7 @@ pause
 goto done
 
 :install_python
-echo [Yorimiyu] No compatible Python found. Installing a portable copy locally...
+echo [Yorimiyu] Preparing a project-owned Python runtime (ignoring broken system aliases)...
 where powershell.exe >nul 2>&1
 if errorlevel 1 goto no_powershell
 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "install-python.ps1"

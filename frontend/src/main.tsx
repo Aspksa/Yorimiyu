@@ -1,10 +1,10 @@
 import React,{useCallback,useEffect,useMemo,useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import ReactFlow,{Background,Controls,MiniMap,MarkerType,Handle,Position,type Node,type Edge} from '@xyflow/react';
+import ReactFlow,{Background,Controls,MiniMap,MarkerType,type Node,type Edge} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import ReactECharts from 'echarts-for-react';
 import {Canvas} from '@react-three/fiber';
-import {OrbitControls,Stars,Text} from '@react-three/drei';
+import {OrbitControls,Stars} from '@react-three/drei';
 import './studio.css';
 
 type Agent={id:string;name:string};
@@ -25,7 +25,7 @@ function Galaxy({nodes}:{nodes:GraphNode[]}){
  const visible=nodes.slice(0,80);
  return <div className="galaxy" aria-label="Трёхмерная визуализация знаний"><Canvas camera={{position:[0,0,22],fov:55}} dpr={[1,1.5]}>
  <ambientLight intensity={1.8}/><pointLight position={[8,8,8]} intensity={100}/><Stars radius={90} depth={40} count={800} factor={3} fade speed={0.3}/>
- {visible.map((n,i)=>{const angle=i*2.39996;const radius=Math.sqrt(i)*1.1;const x=Math.cos(angle)*radius;const y=Math.sin(angle)*radius;const z=Math.sin(i*0.7)*2.2;return <group key={n.id} position={[x,y,z]}><mesh><sphereGeometry args={[n.kind==='entity'?.26:.16,12,12]}/><meshStandardMaterial color={n.kind==='entity'?'#b84b58':'#e7b86e'} emissive={n.kind==='entity'?'#5c1e29':'#785523'} emissiveIntensity={.3}/></mesh>{i<14&&<Text position={[0,.46,0]} fontSize={.23} color="#fff4e7" anchorX="center" maxWidth={3}>{n.label.slice(0,25)}</Text>}</group>})}
+ {visible.map((n,i)=>{const angle=i*2.39996;const radius=Math.sqrt(i)*1.1;const x=Math.cos(angle)*radius;const y=Math.sin(angle)*radius;const z=Math.sin(i*0.7)*2.2;return <group key={n.id} position={[x,y,z]}><mesh><sphereGeometry args={[n.kind==='entity'?.26:.16,12,12]}/><meshStandardMaterial color={n.kind==='entity'?'#b84b58':'#e7b86e'} emissive={n.kind==='entity'?'#5c1e29':'#785523'} emissiveIntensity={.3}/></mesh></group>})}
  <OrbitControls enablePan enableZoom minDistance={5} maxDistance={60}/></Canvas><span className="galaxy-caption">Перетаскивайте для вращения · колесо — масштаб · до 80 узлов</span></div>;
 }
 function App(){

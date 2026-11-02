@@ -89,7 +89,7 @@ class Handler(SimpleHTTPRequestHandler):
                     try:
                         result["graph_index"] = index_memory(data.get("agent_id"), result["memory"]["id"], data.get("content"))
                     except Exception:
-                        logging.warning("Neo4j unavailable; memory preserved in SQLite")
+                        logging.exception("SQLite graph indexing failed; memory preserved in primary SQLite")
                         result["graph_index"] = {"state":"pending"}
                 elif self.path == "/api/cloud/settings":
                     result = save_cloud(data)
@@ -97,7 +97,7 @@ class Handler(SimpleHTTPRequestHandler):
                     agent = data.get("agent_id")
                     if not isinstance(agent,str) or not db.execute("SELECT 1 FROM agents WHERE id=?",(agent,)).fetchone():
                         raise ValueError("Agent not found")
-                    rows = db.execute("SELECT id,content FROM memories WHERE agent_id=? ORDER BY id LIMIT 500",(agent,)).fetchall()
+                    rows = db.execute("SELECT id,content FROM memories WHERE agent_id=? ORDER BY id",(agent,)).fetchall()
                     indexed = 0
                     for row in rows:
                         index_memory(agent,row["id"],row["content"])

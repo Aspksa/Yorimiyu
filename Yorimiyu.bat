@@ -15,6 +15,7 @@ if not exist "graphiti_adapter.py" goto missing
 if not exist "graphiti_delivery.py" goto missing
 if not exist "web\app.js" goto missing
 if not exist "install-python.ps1" goto missing
+if not exist "Build-Studio.cmd" goto missing
 
 if not exist "logs" mkdir "logs" 2>nul
 set "PY_EXE="
@@ -31,6 +32,12 @@ if exist ".runtime\python\python.exe" (
 goto install_python
 
 :start
+rem First launch also prepares React Studio; Python dashboard remains usable on npm failure.
+if /i not "%YORIMIYU_SKIP_STUDIO%"=="1" (
+  echo [Yorimiyu] Checking React Studio dependencies and build...
+  call "%~dp0Build-Studio.cmd"
+  if errorlevel 1 echo [WARN] React Studio unavailable. Starting original dashboard.
+)
 echo [Yorimiyu] Python: %PY_EXE% %PY_ARGS%
 echo [Yorimiyu] Starting local dashboard...
 "%PY_EXE%" %PY_ARGS% -u -c "import os,sys,runpy;sys.path.insert(0,os.getcwd());sys.argv=['launcher.py']+sys.argv[1:];runpy.run_path('launcher.py',run_name='__main__')" %*

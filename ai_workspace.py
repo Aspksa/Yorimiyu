@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 import json
-from local_services import cloud_connection, graph_status
+from local_services import cloud_connection, graph_status, extract_entities, index_memory
 
 def initialize(db):
     db.executescript("""
@@ -120,10 +120,17 @@ def send_chat(db,agent_id,content):
     valid_agent(db,agent_id)
     if not isinstance(content,str) or not 1<=len(content.strip())<=8000:
         raise ValueError("Сообщение должно содержать 1–8000 символов")
-    if not os.environ.get("YORIMIYU_LLM_URL"):
+    if not all(cloud_connection()[:2]):
         raise ValueError("Модель не настроена. Укажите YORIMIYU_LLM_URL и YORIMIYU_LLM_MODEL")
     db.execute("INSERT INTO chat_messages(agent_id,role,content,created_at) VALUES(?,?,?,?)",(agent_id,"user",content.strip(),datetime.now(timezone.utc).isoformat()))
     db.commit()
+    # Automatic *suggestions*, not autonomous permanent memories.
+    entities=extract_entities(content)
+    if entities:
+        source=db.execute("SELECT last_insert_rowid()").fetchone()[0]
+        db.execute("INSERT OR IGNORE INTO learning_suggestions(agent_id,content,source_message_id) VALUES(?,?,?)",
+                   (agent_id,content.strip(),source))
+        db.commit()
     # Failed model calls remain visible as unanswered user messages.
     answer=llm_reply(db,agent_id,content.strip())
     db.execute("INSERT INTO chat_messages(agent_id,role,content,created_at) VALUES(?,?,?,?)",(agent_id,"assistant",answer,datetime.now(timezone.utc).isoformat()))
@@ -154,7 +161,9 @@ def review(db,agent_id,suggestion_id,approve):
     if not row: raise ValueError("Предложение не найдено или уже обработано")
     if approve:
         from memory_bridge import add_memory
-        add_memory(db,agent_id,row["content"])
+        saved=add_memory(db,agent_id,row["content"])
+        try: index_memory(agent_id,saved["id"],row["content"])
+        except Exception: pass  # SQLite memory remains authoritative when Neo4j is offline
     db.execute("UPDATE learning_suggestions SET state=? WHERE id=?",("approved" if approve else "rejected",suggestion_id))
     db.commit()
     return {"state":"approved" if approve else "rejected"}

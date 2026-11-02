@@ -265,3 +265,8 @@ button,a,summary,select,input,textarea{outline-offset:3px}
 .cloud-actions button{min-height:44px;flex:1 1 180px}
 #cloud-diagnostics{border-left:3px solid var(--gold,#b48746);padding:12px 15px;border-radius:0 10px 10px 0;background:var(--accent-soft);font-size:13px;line-height:1.6;overflow-wrap:anywhere}
 #cloud-state{font-size:13px}
+
+/* Optional React studio entry */
+.sidebar nav .studio-link{display:block;margin:14px 4px 0;padding:13px 15px;border:1px solid var(--border);border-radius:13px;color:var(--accent);background:var(--accent-soft);text-decoration:none;font-weight:750}
+.sidebar nav .studio-link small{display:block;margin-top:4px;font-size:10px;color:var(--muted);font-weight:500}
+.sidebar nav .studio-link:hover{border-color:var(--accent)}

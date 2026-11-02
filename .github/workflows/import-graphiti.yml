@@ -1,0 +1,44 @@
+name: Import Graphiti upstream
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Yorimiyu
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+      - name: Clone upstream Graphiti
+        run: git clone --depth 1 https://github.com/getzep/graphiti.git /tmp/graphiti
+      - name: Copy complete upstream into vendor/graphiti
+        shell: bash
+        run: |
+          mkdir -p vendor/graphiti
+          rsync -a --delete --exclude='.git/' /tmp/graphiti/ vendor/graphiti/
+          git -C /tmp/graphiti rev-parse HEAD > vendor/graphiti/UPSTREAM_COMMIT
+          test -f vendor/graphiti/pyproject.toml
+          test -d vendor/graphiti/graphiti_core
+          test -d vendor/graphiti/mcp_server
+          test -d vendor/graphiti/server
+      - name: Open import pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          branch="import/graphiti-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add vendor/graphiti
+          if git diff --cached --quiet; then
+            echo "No upstream changes"
+            exit 0
+          fi
+          git commit -m "Vendor complete Graphiti upstream snapshot"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" --title "Import full Graphiti source into Yorimiyu" --body "Imports a complete upstream Graphiti snapshot under vendor/graphiti, preserving its license and source files. Review dependency security, API configuration and run tests before merging. This does not imply Graphiti is integrated or production-ready."

@@ -9,7 +9,8 @@ async function api(path, options) {
 function node(tag, text) { const element = document.createElement(tag); element.textContent = text; return element; }
 async function refresh() {
   try {
-    const [status, agents] = await Promise.all([api('/api/status'),api('/api/agents')]);
+    const [status, agents, graphiti] = await Promise.all([api('/api/status'),api('/api/agents'),api('/api/graphiti/status')]);
+    $('graphiti-state').textContent = graphiti.state + ' · очередь: ' + graphiti.queued;
     $('connection-status').textContent = 'Локальная память работает';
     $('memory-count').textContent = String(status.memories);
     $('agent-count').textContent = String(status.agents);

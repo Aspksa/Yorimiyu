@@ -63,7 +63,12 @@ def neo4j_config():
     p=urlsplit(url)
     if p.scheme!="http" or p.hostname not in ("127.0.0.1","localhost") or p.port!=7474 or p.username or p.password or p.query or p.fragment or p.path:
         raise ValueError("Neo4j HTTP must be on local port 7474")
-    return url,os.environ.get("YORIMIYU_NEO4J_USER","neo4j"),os.environ.get("YORIMIYU_NEO4J_PASSWORD","")
+    password=os.environ.get("YORIMIYU_NEO4J_PASSWORD","")
+    if not password:
+        secret=ROOT / ".runtime" / "neo4j-local.json"
+        if secret.is_file():
+            password=json.loads(secret.read_text(encoding="utf-8-sig")).get("password","")
+    return url,os.environ.get("YORIMIYU_NEO4J_USER","neo4j"),password
 
 def cypher(statement,parameters=None):
     url,user,password=neo4j_config()

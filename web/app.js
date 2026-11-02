@@ -79,19 +79,25 @@ async function refreshWorkspace() {
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
   svg.setAttribute('viewBox','0 0 800 420'); svg.setAttribute('role','img'); svg.setAttribute('aria-label','Граф локальной памяти');
   const pos=nodes.map((n,i)=>({x:400+320*Math.cos(i*2.399963),y:210+175*Math.sin(i*2.399963)}));
+  const layer=document.createElementNS(svg.namespaceURI,'g');layer.setAttribute('id','graph-layer');svg.append(layer);
   for (const e of edges) {
     if (!map.has(e.source)||!map.has(e.target)) continue;
     const a=pos[map.get(e.source)],b=pos[map.get(e.target)];
     const line=document.createElementNS(svg.namespaceURI,'line');
     for (const [k,v] of Object.entries({x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'#b58a48','stroke-opacity':'0.5','stroke-width':Math.min(e.weight,4)})) line.setAttribute(k,v);
-    svg.append(line);
+    layer.append(line);
   }
   nodes.forEach((n,i)=>{
     const circle=document.createElementNS(svg.namespaceURI,'circle');
     for (const [k,v] of Object.entries({cx:pos[i].x,cy:pos[i].y,r:7,fill:'#e3c080'})) circle.setAttribute(k,v);
-    const title=document.createElementNS(svg.namespaceURI,'title');title.textContent=n.label;circle.append(title);svg.append(circle);
+    circle.setAttribute('tabindex','0');circle.setAttribute('role','button');circle.setAttribute('aria-label',n.label||'Узел графа');
+    const select=()=>{$('graph-selected').textContent=n.label||n.id;layer.querySelectorAll('circle').forEach(el=>el.classList.remove('is-selected'));circle.classList.add('is-selected');};
+    circle.addEventListener('click',select);circle.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}});
+    const title=document.createElementNS(svg.namespaceURI,'title');title.textContent=n.label;circle.append(title);layer.append(circle);
+    const label=document.createElementNS(svg.namespaceURI,'text');label.textContent=String(n.label||'').slice(0,25);label.setAttribute('x',pos[i].x+12);label.setAttribute('y',pos[i].y+4);label.setAttribute('class','graph-node-label');layer.append(label);
   });
   $('graph-canvas').append(svg);
+  initGraphInteractions(svg);
   $('graph-summary').textContent=nodes.length+' узлов · '+edges.length+' связей · '+graphData.kind;
   $('learning-list').replaceChildren(...learning.suggestions.map(s=>{
     const box=document.createElement('div');box.className='suggestion';
@@ -221,3 +227,47 @@ loadBackups().catch(err=>{$('backup-state').textContent=err.message;});
  }
  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
+
+
+/* Distinct app views: hash navigation never scrolls through other modules. */
+const viewMeta={
+ overview:['Главная','Ваш локальный центр управления памятью и интеллектом.'],
+ chat:['Чат','Диалог с выбранным агентом и поиск по памяти.'],
+ memory:['Память','Записи, эпизоды и состояние локального хранилища.'],
+ graph:['Граф знаний','Интерактивная карта реальных связей с масштабированием и исследованием.'],
+ agents:['Агенты','Управление профилями агентов и сохранёнными записями.'],
+ learning:['Развитие','Проверка и подтверждение предложений для памяти.'],
+ services:['Подключения','Cloud.ru, Neo4j, Graphiti, Letta и резервные копии.'],
+ settings:['Настройки','Внешний вид, размер интерфейса и персонализация.']
+};
+function navigateWorkspace(){
+ const requested=decodeURIComponent(location.hash.slice(1));
+ const page=Object.prototype.hasOwnProperty.call(viewMeta,requested)?requested:'overview';
+ document.querySelectorAll('[data-view]').forEach(el=>{el.hidden=el.dataset.view!==page;});
+ document.querySelectorAll('[data-page-link]').forEach(el=>{const active=el.dataset.pageLink===page;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});
+ $('page-title').textContent=viewMeta[page][0];$('page-description').textContent=viewMeta[page][1];
+ document.title='Yorimiyu — '+viewMeta[page][0];
+ window.scrollTo({top:0,behavior:'instant'});
+}
+window.addEventListener('hashchange',navigateWorkspace);
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',navigateWorkspace);else navigateWorkspace();
+
+let graphView={scale:1,x:0,y:0};
+function initGraphInteractions(svg){
+ const layer=svg.querySelector('#graph-layer');if(!layer)return;
+ graphView={scale:1,x:0,y:0};
+ const update=()=>layer.setAttribute('transform',`translate(${graphView.x} ${graphView.y}) translate(400 210) scale(${graphView.scale}) translate(-400 -210)`);
+ const zoom=(factor)=>{graphView.scale=Math.max(.35,Math.min(4,graphView.scale*factor));update();};
+ $('graph-zoom-in').onclick=()=>zoom(1.25);$('graph-zoom-out').onclick=()=>zoom(.8);
+ $('graph-reset').onclick=()=>{graphView={scale:1,x:0,y:0};update();};
+ $('graph-fit').onclick=()=>{graphView={scale:1,x:0,y:0};update();};
+ $('graph-labels').onchange=e=>svg.classList.toggle('hide-labels',!e.target.checked);
+ svg.classList.toggle('hide-labels',!$('graph-labels').checked);
+ svg.addEventListener('wheel',e=>{e.preventDefault();zoom(e.deltaY<0?1.1:.9);},{passive:false});
+ let dragging=false,previous=null;
+ svg.addEventListener('pointerdown',e=>{if(e.target.tagName.toLowerCase()==='circle')return;dragging=true;previous={x:e.clientX,y:e.clientY};svg.setPointerCapture(e.pointerId);});
+ svg.addEventListener('pointermove',e=>{if(!dragging||!previous)return;const rect=svg.getBoundingClientRect();graphView.x+=(e.clientX-previous.x)*800/rect.width;graphView.y+=(e.clientY-previous.y)*420/rect.height;previous={x:e.clientX,y:e.clientY};update();});
+ svg.addEventListener('pointerup',()=>{dragging=false;previous=null;});
+ svg.addEventListener('pointercancel',()=>{dragging=false;previous=null;});
+ update();
+}

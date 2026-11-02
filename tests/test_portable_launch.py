@@ -47,6 +47,7 @@ class PortableLaunchTests(unittest.TestCase):
                 self.assertIn("Already running", second.stdout)
                 if os.name == "nt":
                     shutil.copy2(ROOT / "Yorimiyu.bat", folder / "Yorimiyu.bat")
+                    shutil.copy2(ROOT / "install-python.ps1", folder / "install-python.ps1")
                     bat = subprocess.run(["cmd.exe", "/d", "/c", "Yorimiyu.bat --no-browser"],
                                          cwd=folder, input="\n", capture_output=True,
                                          text=True, errors="replace", timeout=12)

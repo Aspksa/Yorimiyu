@@ -93,7 +93,7 @@ class Handler(SimpleHTTPRequestHandler):
                         result["graph_index"] = {"state":"pending"}
                 elif self.path == "/api/cloud/settings":
                     result = save_cloud(data)
-                elif self.path == "/api/neo4j/index":
+                elif self.path in ("/api/neo4j/index","/api/sqlite-graph/index"):
                     agent = data.get("agent_id")
                     if not isinstance(agent,str) or not db.execute("SELECT 1 FROM agents WHERE id=?",(agent,)).fetchone():
                         raise ValueError("Agent not found")
@@ -145,11 +145,11 @@ class Handler(SimpleHTTPRequestHandler):
                         result = {"matches": search(db, agent_id, parse_qs(path.query).get("q", [""])[0])}
                     elif path.path == "/api/graph":
                         result = graph(db, agent_id)
-                    elif path.path == "/api/neo4j/graph":
+                    elif path.path in ("/api/neo4j/graph","/api/sqlite-graph/graph"):
                         if not db.execute("SELECT 1 FROM agents WHERE id=?",(agent_id,)).fetchone():
                             raise ValueError("Agent not found")
                         result = graph_view(agent_id,parse_qs(path.query).get("q",[""])[0])
-                    elif path.path == "/api/neo4j/status":
+                    elif path.path in ("/api/neo4j/status","/api/sqlite-graph/status"):
                         result = graph_status()
                     elif path.path == "/api/cloud/settings":
                         result = settings_public()

@@ -3,6 +3,8 @@ let currentAgent = '';
 let useSQLiteGraph = true;
 let graphQuery = '';
 const graphIndexedThisSession=new Set();
+const preference=(key,defaultValue)=>{try{const v=localStorage.getItem('yorimiyu:'+key);return v===null?defaultValue:v==='true';}catch(_){return defaultValue;}};
+const savePreference=(key,value)=>{try{localStorage.setItem('yorimiyu:'+key,String(value));}catch(_){}};
 async function api(path, options) {
   const response = await fetch(path, {credentials:'same-origin', ...options});
   const result = await response.json();
@@ -36,7 +38,7 @@ async function refresh() {
     const memories = currentAgent ? await api('/api/memories?agent_id='+encodeURIComponent(currentAgent)) : {memories:[]};
     $('memory-list').replaceChildren(...memories.memories.map(m=>node('li',m.content)));
     filterMemories();
-    if(currentAgent && memories.memories.length && !graphIndexedThisSession.has(currentAgent)){
+    if(currentAgent && memories.memories.length && $('graph-auto-index').checked && !graphIndexedThisSession.has(currentAgent)){
       graphIndexedThisSession.add(currentAgent);
       try {await api('/api/sqlite-graph/index',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent_id:currentAgent})});}
       catch(error){graphIndexedThisSession.delete(currentAgent);$('graph-action-state').textContent='Автоиндексация: '+error.message;}
@@ -382,11 +384,71 @@ async function checkConnections(){
  finally{connectionBusy=false;button.disabled=false;}
 }
 $('connections-refresh').addEventListener('click',checkConnections);
+$('connections-auto').checked=preference('connections-auto',true);
+$('graph-auto-index').checked=preference('graph-auto-index',true);
+$('connections-auto').addEventListener('change',e=>{savePreference('connections-auto',e.target.checked);if(e.target.checked)checkConnections();});
+$('graph-auto-index').addEventListener('change',e=>{savePreference('graph-auto-index',e.target.checked);if(e.target.checked)refresh();});
 setInterval(()=>{if($('connections-auto').checked)checkConnections();},30000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&$('connections-auto').checked)checkConnections();});
 checkConnections();
 $('chat-input').addEventListener('keydown',event=>{
  if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){
    event.preventDefault();$('chat-form').requestSubmit();
+ }
+});
+
+/* Keyboard navigation: lightweight local command palette, no external dependencies. */
+const quickPages=[
+ ['overview','Главная','Обзор и состояние'],
+ ['chat','Чат','Диалог с агентом'],
+ ['memory','Память','Локальная библиотека'],
+ ['graph','Граф знаний','Узлы и связи'],
+ ['agents','Агенты','Профили агентов'],
+ ['learning','Развитие','Предложения памяти'],
+ ['services','Подключения','Автоматизация и Cloud.ru'],
+ ['settings','Настройки','Оформление и параметры']
+];
+let quickActive=0,quickMatches=quickPages,quickPreviousFocus=null;
+function renderQuick(){
+ const q=$('quick-search').value.trim().toLocaleLowerCase('ru');
+ quickMatches=quickPages.filter(p=>p.slice(1).join(' ').toLocaleLowerCase('ru').includes(q));
+ quickActive=Math.min(quickActive,Math.max(0,quickMatches.length-1));
+ $('quick-results').replaceChildren(...quickMatches.map((p,i)=>{
+   const b=node('button',p[1]+' — '+p[2]);b.type='button';b.className='quick-result'+(i===quickActive?' selected':'');
+   b.setAttribute('aria-current',i===quickActive?'true':'false');
+   b.onclick=()=>{location.hash='#'+p[0];closeQuick();};
+   return b;
+ }));
+ if(!quickMatches.length)$('quick-results').append(node('p','Разделы не найдены'));
+}
+function openQuick(){
+ quickPreviousFocus=document.activeElement;
+ $('quick-dialog').hidden=false;quickActive=0;$('quick-search').value='';renderQuick();$('quick-search').focus();
+}
+function closeQuick(){
+ $('quick-dialog').hidden=true;
+ if(quickPreviousFocus?.isConnected)quickPreviousFocus.focus();
+}
+$('quick-open').addEventListener('click',openQuick);
+$('quick-dialog').querySelector('[data-quick-close]').addEventListener('click',closeQuick);
+$('quick-search').addEventListener('input',()=>{quickActive=0;renderQuick();});
+document.addEventListener('keydown',event=>{
+ if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){
+   event.preventDefault();$('quick-dialog').hidden?openQuick():closeQuick();return;
+ }
+ if($('quick-dialog').hidden)return;
+ if(event.key==='Escape'){event.preventDefault();closeQuick();}
+ if(event.key==='Tab'){
+   const focusables=[$('quick-search'),...$('quick-results').querySelectorAll('button')];
+   const index=focusables.indexOf(document.activeElement);
+   if(event.shiftKey&&index===0){event.preventDefault();focusables[focusables.length-1].focus();}
+   else if(!event.shiftKey&&index===focusables.length-1){event.preventDefault();focusables[0].focus();}
+ }
+ if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+   event.preventDefault();if(!quickMatches.length)return;
+   quickActive=(quickActive+(event.key==='ArrowDown'?1:-1)+quickMatches.length)%quickMatches.length;renderQuick();
+ }
+ if(event.key==='Enter'&&document.activeElement===$('quick-search')&&quickMatches.length){
+   event.preventDefault();location.hash='#'+quickMatches[quickActive][0];closeQuick();
  }
 });

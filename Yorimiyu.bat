@@ -33,6 +33,7 @@ goto install_python
 :start
 echo [Yorimiyu] Python: %PY_EXE% %PY_ARGS%
 echo [Yorimiyu] Starting local dashboard...
+if defined YORIMIYU_NEO4J_PASSWORD if exist "start-neo4j.ps1" powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "start-neo4j.ps1"
 "%PY_EXE%" %PY_ARGS% -u -c "import os,sys,runpy;sys.path.insert(0,os.getcwd());sys.argv=['launcher.py']+sys.argv[1:];runpy.run_path('launcher.py',run_name='__main__')" %*
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" goto failed
